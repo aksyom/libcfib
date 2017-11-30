@@ -4,7 +4,7 @@
 Design goals:
 - NO inline assembler, it's ugly!
 - NO faux language constructs with macros, they are even worse than inline assembler!
-- aim for simplicity first
+- aim for minimalist interface and simple, intelligible design
 - all complex operations should be done with C functions
 - stack switching and context swapping done with small and simple assembler routines
 - assembler routines in separate files sorted by calling convention and CPU architecture
