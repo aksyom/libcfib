@@ -24,9 +24,6 @@ _cfib_call:
     call _cfib_exit_thread
 %else
     call _cfib_exit_thread wrt ..plt ; call the thread exit vector via ELF plt
-.get_addr:
-    mov rcx, _cfib_call
-    jmp _cfib_init_stack.get_addr_ret
 %endif
 
 ; This function synthesizes an initial stack for
@@ -54,13 +51,12 @@ _cfib_init_stack:
     push rdx        ; 3rd arg rdx = void* args
     %ifdef _ELF_SHARED
     ; we are relocated, so we cannot know beforehand what is the abs address
-    ; of our initial call vector ... we will have the call vector report it
-    ; for us in the rcx register!
-    jmp _cfib_call.get_addr
-.get_addr_ret:  ; _cifb_call.get_addr code will return here
+    ; of our initial call vector ... but NASM allows us to get that abs address
+    ; by loading the address from symbol into register
+    mov rcx, _cfib_call
     push rcx    ; absolute addr of _cfib_call is in rcx, push it to stack!
     %else
-    push _cfib_call ; push addr of _cfib_call to stack
+    push qword _cfib_call ; push addr of _cfib_call to stack
     %endif
     push rbp        ; push [rbp] = 0x0, prevent gdb going apeshit
     sub rsp, 40     ; alloca [r15 - rbx]
