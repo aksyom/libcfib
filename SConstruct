@@ -16,51 +16,62 @@ def check_c11_thread_local(context):
 libcfib_tests = {
         'CheckC11ThreadLocal' : check_c11_thread_local
         }
+
 env = Environment()
-env.Append(CCFLAGS = '-g')
+# SCons is too smart ... need to tell it to fuck off
+env['STATIC_AND_SHARED_OBJECTS_ARE_THE_SAME'] = True
+env.Append(CCFLAGS = ['-g'])
+
+have_c11_thread_local = False
+system_api = None
 
 if not env.GetOption('clean'):
     cnf = Configure(env, custom_tests = libcfib_tests)
-    have_c11_thread_local = False
-    have_c11_threads = False
-    if cnf.CheckC11ThreadLocal():
-        cnf.env.Append(CCFLAGS = ['-D_CFIB_THREAD_LOCAL=C11'])
-        have_c11_thread_local = True
-        if cnf.CheckHeader('threads.h'):
-            cnf.env.Append(LIBS = ['stdthreads'])
-            have_c11_threads = True
     if cnf.CheckHeader('unistd.h'):
-        cnf.env.Append(CCFLAGS = ['-D_CFIB_SYS=POSIX'])
+        cnf.env.Append(CPPDEFINES = '_CFIB_SYSAPI_POSIX')
+        system_api = "POSIX"
         if cnf.CheckHeader('pthread.h'):
-            if have_c11_thread_local == False:
-                cnf.env.Append(CCFLAGS = ['-D_CFIB_THREAD_LOCAL=POSIX'])
-            if have_c11_threads == False:
+            if cnf.CheckLib('pthread'):
                 cnf.env.Append(LIBS = ['pthread'])
+            else:
+                print "Non-compliant POSIX system: missing -lpthread!"
+                Exit(1)
         else:
             print "Non-compliant POSIX system: missing pthread.h!"
             Exit(1)
     elif cnf.CheckHeader('windows.h'):
-        cnf.env.Append(CCFLAGS = ['-D_CFIB_SYS=WINDOWS'])
-        if have_c11_thread_local == False:
-            cnf.env.Append(CCFLAGS = ['-D_CFIB_THREAD_LOCAL=WINDOWS'])
+        cnf.env.Append(CPPDEFINES = '_CFIB_SYSAPI_WINDOWS')
+        system_api = "WINDOWS"
+    else:
+        print "Unsupported platform."
+        Exit(1)
+    if cnf.CheckC11ThreadLocal():
+        have_c11_thread_local = True
     env = cnf.Finish()
-# SCons is too smart ... need to tell it to fuck off
-env['STATIC_AND_SHARED_OBJECTS_ARE_THE_SAME'] = True
+    print env['CPPDEFINES']
+
 nasm_env = env.Clone();
 nasm_env.Append(BUILDERS = {'NASMObject' : Builder(action = 'nasm -f $NASM_FORMAT $NASM_FLAGS -o $TARGET $SOURCE')})
 nasm_env['NASM_FORMAT'] = 'elf64'
-#nasm_env['NASM_FLAGS'] = '-d _ELF_SHARED=1'
-nasm_shared_obj = nasm_env.NASMObject('cfib-sysv-amd64.os', 'cfib-sysv-amd64.asm', NASM_FLAGS='-D _ELF_SHARED')
+nasm_shared_obj = nasm_env.NASMObject('cfib-sysv-amd64.os', 'cfib-sysv-amd64.asm', NASM_FLAGS='-D _ELF_SHARED=1')
 nasm_static_obj = nasm_env.NASMObject('cfib-sysv-amd64.o', 'cfib-sysv-amd64.asm')
-libcfib_shared_sources = ['cfib.c', 'cfib-sysv-amd64.os']
-libcfib_static_sources = ['cfib.c', 'cfib-sysv-amd64.o']
 
+if have_c11_thread_local:
+    env_c11 = env.Clone()
+    env_c11.Append(CCFLAGS = ['-D_HAVE_C11_THREAD_LOCAL'])
+    shared_objects = [env_c11.SharedObject('cfib_C11', 'cfib.c'), nasm_shared_obj]
+    static_objects = [env_c11.StaticObject('cfib_C11', 'cfib.c'), nasm_static_obj]
+    env_c11.SharedLibrary(target = 'cfib_C11', source = shared_objects)
+    env_c11.StaticLibrary(target = 'cfib_C11', source = static_objects)
+    test_obj = env_c11.Object('test_cfib_c11', 'test_cfib.c')
+    env_c11.Program(target = 'test_cfib_C11_static', source = [test_obj, Dir('.').abspath + '/libcfib_C11.a'])
+    env_c11.Program(target = 'test_cfib_C11', source = [test_obj], LIBS = ['cfib_C11'], LIBPATH = ['.'])
 
-#libcfib_a = env.StaticLibrary(target = 'cfib', source = libcfib_sources)
-libcfib = env.SharedLibrary(target = 'cfib', source = libcfib_shared_sources)
-libcfib = env.StaticLibrary(target = 'cfib', source = libcfib_static_sources)
-test_obj = Object('test_cfib')
-test_env = env.Clone();
-test_env.Program(target = 'test_cfib_static', source = [test_obj, Dir('.').abspath + '/libcfib.a'])
-test_env.Program(target = 'test_cfib', source = [test_obj], LIBS = ['cfib'], LIBPATH = ['.'])
+shared_objects = [env.SharedObject('cfib', 'cfib.c'), nasm_shared_obj]
+static_objects = [env.StaticObject('cfib', 'cfib.c'), nasm_static_obj]
+env.SharedLibrary(target = 'cfib', source = shared_objects)
+env.StaticLibrary(target = 'cfib', source = static_objects)
+test_obj = env.Object('test_cfib.c')
+env.Program(target = 'test_cfib_static', source = [test_obj, Dir('.').abspath + '/libcfib.a'])
+env.Program(target = 'test_cfib', source = [test_obj], LIBS = ['cfib'], LIBPATH = ['.'])
 

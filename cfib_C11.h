@@ -55,7 +55,11 @@ typedef struct _cfib_context_type {
     unsigned char* stack_floor;
 } cfib_t;
 
-cfib_t* cfib_get_current();
+extern _Thread_local cfib_t* _cfib_current;
+
+inline cfib_t* cfib_get_current() {
+    return _cfib_current;
+}
 
 /*! Initialize a fiber for current thread.
  *
@@ -112,6 +116,17 @@ inline static cfib_t* cfib_new(void* start_routine, void* args, uint32_t ssize) 
     return c;
 }
 
+/*! Save state to sp1 and swap into sp2.
+ *
+ * !!! Do not call this function directly; use cfib_swap() instead !!!
+ *
+ * This function is implemented in a system and CPU specific assembler file.
+ * The correct assembler file for a specific system+CPU combo is compiled and
+ * linked into the library by the library build script.
+ *
+ */
+void _cfib_swap(unsigned char** sp1, unsigned char* sp2);
+
 /*! Swap current fiber with the one provided as argument.
  *
  * Swaps current execution context to the one provided as an argument. That is,
@@ -121,8 +136,13 @@ inline static cfib_t* cfib_new(void* start_routine, void* args, uint32_t ssize) 
  * @param[in/out] to the context from which execution should continue.
  *
  * @remark It is ENTIRELY up to the programmer to keep tabs on different contexts.
+ * @remark The purpose of this function is to avoid having to deal with thread local storage in assembler.
  */
-void cfib_swap(cfib_t* to);
+inline static void cfib_swap(cfib_t* to) {
+    cfib_t* from = _cfib_current;
+    _cfib_current = to;
+    _cfib_swap(&from->sp, to->sp);
+}
 
 /*! Unmap the stack memory of the provided context.
  *
