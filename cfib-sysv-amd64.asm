@@ -32,7 +32,7 @@ _cfib_call:
 ; rsi = void (*func)(void*), co-routine function
 ; rdx = void *args, arguments for co-routine
 _cfib_init_stack:
-    mov r8, rbp    ; save rbp by convention
+    ;mov r8, rbp    ; save rbp by convention
     mov r9, rsp     ; save rsp for unpivoting
     mov rsp, [rdi]  ; pivot stack to 1st arg (rdi)
     ; NOTE: empty stack's rsp should be aligned to page,
@@ -43,7 +43,7 @@ _cfib_init_stack:
     ; NOTE: the zeroes we pushed to the stack was
     ; done so that we can point rbp to it later.
     ; This will stop gdb from going apeshit!
-    mov rbp, rsp    ; rbp = stack bottom, value 0x0
+    mov r8, rsp    ; r8 (as rbp) = stack bottom, value 0x0
     ; push 2nd and 3rd argument to stack
     ; these are popped by _co_init_call
     ; into 1st and 2nd argument regs respectively
@@ -58,14 +58,14 @@ _cfib_init_stack:
     %else
     push qword _cfib_call ; push addr of _cfib_call to stack
     %endif
-    push rbp        ; push [rbp] = 0x0, prevent gdb going apeshit
+    push r8        ; push [r8] = 0x0, prevent gdb going apeshit
     sub rsp, 40     ; alloca [r15 - rbx]
     ; NOTE: now the stack is 8-byte aligned! This is necessary
     ; because _co_swap and _co_exit require that the
     ; next context stack pointer must be aligned to 8
     mov [rdi], rsp  ; save context sp
     mov rsp, r9     ; unpivot stack
-    mov rbp, r8     ; restore rbp
+    ;mov rbp, r8     ; restore rbp
     ret
 
 ; Swap context from current to next
