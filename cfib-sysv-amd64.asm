@@ -1,6 +1,4 @@
-%ifdef _ELF_SHARED
 default rel
-%endif
 bits 64
 align 16
 global _cfib_call:function
