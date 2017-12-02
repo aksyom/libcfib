@@ -7,9 +7,9 @@ global _cfib_swap:function
 extern _cfib_exit_thread
 section .text
 
-; Call initializer, reverse-called by _co_swap.
-; Previous to _co_swap, the stack was initialized by _co_init_stack.
-; Now, _co_swap has already popped all callee saved regs (48 bytes)
+; Call initializer, reverse-called by _cfib_swap.
+; Previous to _cfib_swap, the stack was initialized by _cfib_init_stack.
+; Now, _cfib_swap has already popped all callee saved regs (48 bytes)
 ; and the stack is aligned to 8-byte boundary.
 ; - First quad in the stack is 8-bytes of bogus, put there
 ; only to align the stack pointer to 8-byte boundary.
@@ -27,12 +27,11 @@ _cfib_call:
 %endif
 
 ; This function synthesizes an initial stack for
-; a context, so that _co_swap can pivot into it!
+; a context, so that _cfib_swap can pivot into it!
 ; rdi = void** sp, pointer to rsp of the allocated stack
 ; rsi = void (*func)(void*), co-routine function
 ; rdx = void *args, arguments for co-routine
 _cfib_init_stack:
-    ;mov r8, rbp    ; save rbp by convention
     mov r9, rsp     ; save rsp for unpivoting
     mov rsp, [rdi]  ; pivot stack to 1st arg (rdi)
     ; NOTE: empty stack's rsp should be aligned to page,
@@ -45,7 +44,7 @@ _cfib_init_stack:
     ; This will stop gdb from going apeshit!
     mov r8, rsp    ; r8 (as rbp) = stack bottom, value 0x0
     ; push 2nd and 3rd argument to stack
-    ; these are popped by _co_init_call
+    ; these are popped by _cfib_call
     ; into 1st and 2nd argument regs respectively
     push rsi        ; 2nd arg rsi = void (*func)(void*)
     push rdx        ; 3rd arg rdx = void* args
@@ -65,7 +64,6 @@ _cfib_init_stack:
     ; next context stack pointer must be aligned to 8
     mov [rdi], rsp  ; save context sp
     mov rsp, r9     ; unpivot stack
-    ;mov rbp, r8     ; restore rbp
     ret
 
 ; Swap context from current to next
