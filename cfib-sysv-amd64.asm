@@ -1,9 +1,13 @@
-    global _cfib_call
-    global _cfib_init_stack
-    global _cfib_swap
-    extern _cfib_exit_thread
-    section .text
-
+%ifdef _ELF_SHARED
+default rel
+%endif
+bits 64
+align 16
+global _cfib_call:function
+global _cfib_init_stack:function
+global _cfib_swap:function
+extern _cfib_exit_thread
+section .text
 
 ; Call initializer, reverse-called by _co_swap.
 ; Previous to _co_swap, the stack was initialized by _co_init_stack.
@@ -18,7 +22,14 @@ _cfib_call:
     ; stack is now aligned to 16-byte boundary
     call rsi ; call the function ptr
     ; if the func returned a value, we would handle rax here ...
-    call _cfib_exit_thread ; call the thread exit vector
+%ifndef _ELF_SHARED
+    call _cfib_exit_thread
+%else
+    call _cfib_exit_thread wrt ..plt ; call the thread exit vector via ELF plt
+.get_addr:
+    mov rcx, _cfib_call
+    jmp _cfib_init_stack.get_addr_ret
+%endif
 
 ; This function synthesizes an initial stack for
 ; a context, so that _co_swap can pivot into it!
@@ -43,7 +54,16 @@ _cfib_init_stack:
     ; into 1st and 2nd argument regs respectively
     push rsi        ; 2nd arg rsi = void (*func)(void*)
     push rdx        ; 3rd arg rdx = void* args
-    push _cfib_call  ; _co_swap will call this function
+    %ifdef _ELF_SHARED
+    ; we are relocated, so we cannot know beforehand what is the abs address
+    ; of our initial call vector ... we will have the call vector report it
+    ; for us in the rcx register!
+    jmp _cfib_call.get_addr
+.get_addr_ret:  ; _cifb_call.get_addr code will return here
+    push rcx    ; absolute addr of _cfib_call is in rcx, push it to stack!
+    %else
+    push _cfib_call ; push addr of _cfib_call to stack
+    %endif
     push rbp        ; push [rbp] = 0x0, prevent gdb going apeshit
     sub rsp, 40     ; alloca [r15 - rbx]
     ; NOTE: now the stack is 8-byte aligned! This is necessary
@@ -52,7 +72,7 @@ _cfib_init_stack:
     mov [rdi], rsp  ; save context sp
     mov rsp, r9     ; unpivot stack
     mov rbp, r8     ; restore rbp
-    ret ; return normally, init stack is now init!
+    ret
 
 ; Swap context from current to next
 ; rdi = void**, pointer to current context rsp

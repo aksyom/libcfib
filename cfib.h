@@ -3,7 +3,6 @@
 
 #include <stdint.h>
 #include <stdlib.h>
-#include <stdio.h>
 
 /*! Default stack size.
  *
@@ -17,6 +16,22 @@
 extern "C" {
 #endif
 
+/*! This is the struct that holds execution context for each fiber.
+ *
+ * In essence, this struct IS the fiber itself, but in documentation we might
+ * refer to this struct with words "fiber" or "context" or "execution context".
+ *
+ * The data of this struct is accessed and modified by all cfib_* functions.
+ *
+ * To initialize a new fiber, use cfib_init() or cfib_new() functions.
+ *
+ * To switch into an initialized fiber, use cfib_swap().
+ *
+ * To destroy a fiber and free it's memory, use cfib_unmap().
+ *
+ * Before cfib_swap() can be called, one must initialize a fiber for current
+ * thread by calling cfib_init_thread().
+ */
 typedef struct _cfib_context_type {
     /*! Stack pointer of a saved context.
      *
@@ -40,28 +55,40 @@ typedef struct _cfib_context_type {
     unsigned char* stack_floor;
 } cfib_t;
 
-/*! Pointer to current execution context.
- *
- * The data of this pointer will be modified as needed when a swap occurs.
- */
-extern _Thread_local cfib_t* cfib_current;
+#if _CFIB_THREAD_LOCAL == C11
+extern _Thread_local cfib_t* _cfib_current;
+#elif _CFIB_THREAD_LOCAL == POSIX
+extern pthread_key_t _cfib_tls_key;
+#elif _CFIB_THREAD_LOCAL == WINDOWS
+    #error "TODO: MSVC support."
+#endif
 
-/*! Initialize a fiber context for current thread.
+inline cfib_t* cfib_get_current() {
+#if _CFIB_THREAD_LOCAL == C11
+    return _cfib_current;
+#elif _CFIB_THREAD_LOCAL == POSIX
+    return *((cfib_t**)pthread_getspecific(_cfib_tls_key));
+#elif _CFIB_THREAD_LOCAL == WINDOWS
+    #error "TODO: MSVC support."
+#endif
+}
+
+/*! Initialize a fiber for current thread.
  *
- * This function MUST be called in a thread before any of the other cfib_*
- * functions can be called. Prior to calling cfib_init() in a thread all
- * cfib_*() calls lead program exit with an error message disciplining
- * the programmer who was too proud to read the fucking documentation.
+ * This function MUST be called in a thread before cfib_swap() function can be
+ * called. Prior to calling cfib_init() in a thread, calling cfib_swap() will
+ * lead program exit with an error message disciplining the programmer who was
+ * too proud to read the fucking documentation.
  * 
  * @return a context for this thread's main fiber.
  */
 cfib_t* cfib_init_thread();
 
-/*! Initialize the fiber context provided as argument.
+/*! Initialize a fiber.
  *
- * This function initializes a fiber context structure so that it can be
- * swap():ed into. Specifically, a stack is mapped and initialized so that
- * when context is swap():ed into, the function 'start_routine' get called
+ * This function initializes a fiber so that it can be swap():ed into.
+ * Specifically, a stack is mapped and initialized so that when
+ * the fiber is swap():ed into, the function 'start_routine' get called
  * with 'args' as it's 1st and only argument.
  *
  * The argument 'start_routine' must be a pointer to a function which has
@@ -72,7 +99,7 @@ cfib_t* cfib_init_thread();
  *
  * The argument 'start_routine' should always be explicitly cast to void*
  *
- * This function returns the same context pointer that was passed as argument.
+ * This function returns the same fiber context pointer that was passed as argument.
  *
  * @param[out] context pointer to the context to be initialized, need not be zeroed.
  * @param[in] start_routine a pointer to a function to be executed when cfib_swap() is called on this context.
@@ -93,33 +120,49 @@ cfib_t* cfib_init(cfib_t* context, void* start_routine, void* args, uint32_t ssi
  * @param[in] start_routine a pointer to a function to be executed when cfib_swap() is called on this context.
  * @param[in] args pointer to argument data passed as 1st argument to start_routine.
  * @param[in] ssize the maximum size of the stack, will be automatically rounded to page boundary.
+ * @return pointer to the allocated and initialized fiber context
  */
-inline cfib_t* cfib_new(void* start_routine, void* args, uint32_t ssize) {
+inline static cfib_t* cfib_new(void* start_routine, void* args, uint32_t ssize) {
     cfib_t* c = malloc(sizeof(cfib_t));
     cfib_init(c, start_routine, args, ssize);
     return c;
 }
 
-// Do not use this function directly. Later I'll probably implement cfib_swap()
-// entirely on assembler, and there will be no need for this extra step.
+/*! Save state to sp1 and swap into sp2.
+ *
+ * !!! Do not call this function directly; use cfib_swap() instead !!!
+ *
+ * This function is implemented in a system and CPU specific assembler file.
+ * The correct assembler file for a specific system+CPU combo is compiled and
+ * linked into the library by the library build script.
+ *
+ */
 void _cfib_swap(unsigned char** sp1, unsigned char* sp2);
 
-/*! Swap to another execution context.
+/*! Swap current fiber with the one provided as argument.
  *
  * Swaps current execution context to the one provided as an argument. That is,
- * save execution state to cfib_current, then swap to provided context and return
- * executing where it left off.
+ * save execution state to current context, then swap to provided context
+ * and continue executing where it left off.
  *
- * @param[in/out] to_context the context from which execution should continue.
+ * @param[in/out] to the context from which execution should continue.
  *
  * @remark It is ENTIRELY up to the programmer to keep tabs on different contexts.
+ * @remark The purpose of this function is to avoid having to deal with thread local storage in assembler.
  */
-inline void cfib_swap(cfib_t* to) {
-    cfib_t* from = cfib_current;
-    cfib_current = to;
-    fprintf(stderr, "%p -> %p\n", from, to);
-    fflush(stderr);
-    _cfib_swap(&from->sp, cfib_current->sp);
+inline static void cfib_swap(cfib_t* to) {
+#if _CFIB_THREAD_LOCAL == C11
+    cfib_t* from = _cfib_current;
+    _cfib_current = to;
+    _cfib_swap(&from->sp, to->sp);
+#elif _CFIB_THREAD_LOCAL == POSIX
+    cfib_t** tls = (cfib_t**)pthread_getspecific(_cfib_tls_key);
+    cfib_t* from = *tls;
+    *tls = to;
+    _cfib_swap(&from->sp, to->sp);
+#elif _CFIB_THREAD_LOCAL == WINDOWS
+    #error "TODO: MSVC support."
+#endif
 }
 
 /*! Unmap the stack memory of the provided context.

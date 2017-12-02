@@ -1,15 +1,23 @@
 #include "cfib.h"
-
-// C11 stuff
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
 
-// Unix stuff
+#if _CFIB_SYS == POSIX
 #include <unistd.h>
 #include <sys/mman.h>
+#elif _CFIB_SYS == WINDOWS
+    #error "TODO: WINAPI support."
+#endif
+
+#if _CFIB_THREAD_LOCAL == C11 && !defined(__STDC_NO_THREADS__)
+#include <threads.h>
+#elif _CFIB_SYS == POSIX
 #include <pthread.h>
+#elif _CFIB_SYS == WINDOWS
+    #error "TODO: WINAPI support."
+#endif
 
 // Implemented in assembler module
 void _cfib_init_stack(unsigned char** sp, void* start_addr, void* args);
@@ -21,16 +29,39 @@ static inline uint_fast32_t _cfib_pgsz() {
     return pgsz;
 }
 
-_Thread_local cfib_t* cfib_current = NULL;
+#if _CFIB_THREAD_LOCAL == C11 && !defined (__STDC_NO_THREADS__)
+_Thread_local cfib_t* _cfib_current = NULL;
+#elif _CFIB_SYS == POSIX
+pthread_key_t _cfib_tls_key;
+
+static pthread_once_t _cfib_init_pthread_once = PTHREAD_ONCE_INIT;
+
+static void _cfib_init_pthread() {
+    pthread_key_create(&_cfib_tls_key, NULL);
+    cfib_t** tls = malloc(sizeof(cfib_t**));
+    *tls = calloc(1, sizeof(cfib_t));
+    pthread_setspecific(_cfib_tls_key, tls);
+}
+#elif _CFIB_SYS == WINDOWS
+    #error "TODO: MSVC support."
+#endif
 
 cfib_t* cfib_init_thread()
 {
-    if(cfib_current != NULL) {
-        fprintf(stderr, "libcfib: cfib_init_thread() called from an initialized context!");
-        assert(cfib_current == NULL);
-    }
-    cfib_current = calloc(1, sizeof(cfib_t));
-    return cfib_current;
+#if _CFIB_THREAD_LOCAL == C11 && !defined (__STDC_NO_THREADS__)
+    if(_cfib_current != NULL) //{
+        return _cfib_current;
+    /*    fprintf(stderr, "libcfib: cfib_init_thread() called from an initialized context!");
+        assert(_cfib_current == NULL);
+    }*/
+    _cfib_current = calloc(1, sizeof(cfib_t));
+    return _cfib_current;
+#elif _CFIB_SYS == POSIX
+    assert(pthread_once(_cfib_init_pthread_once, _cfib_init_pthread) == 0);
+    return *((cfib_t**)pthread_getspecific(_cfib_tls_key));
+#elif _CFIB_SYS == WINDOWS
+    #error "TODO: MSVC support."
+#endif
 }
 
 cfib_t* cfib_init(cfib_t* context, void* start_routine, void* args, uint_fast32_t ssize)
@@ -59,5 +90,11 @@ void cfib_unmap(cfib_t* context) {
 
 // This function is called from assembler if a fiber returns.
 void _cfib_exit_thread() {
+#if _CFIB_THREAD_LOCAL == C11 && !defined (__STDC_NO_THREADS__)
+    thrd_exit(0);
+#elif _CFIB_SYS == POSIX
     pthread_exit(NULL);
+#elif _CFIB_SYS == WINDOWS
+    #error "TODO: MSVC support."
+#endif
 }
