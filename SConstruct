@@ -25,30 +25,30 @@ env.Append(CCFLAGS = ['-g'])
 have_c11_thread_local = False
 system_api = None
 
-if not env.GetOption('clean'):
-    cnf = Configure(env, custom_tests = libcfib_tests)
-    if cnf.CheckHeader('unistd.h'):
-        cnf.env.Append(CPPDEFINES = '_CFIB_SYSAPI_POSIX')
-        system_api = "POSIX"
-        if cnf.CheckHeader('pthread.h'):
-            if cnf.CheckLib('pthread'):
-                cnf.env.Append(LIBS = ['pthread'])
-            else:
-                print "Non-compliant POSIX system: missing -lpthread!"
-                Exit(1)
+#if not env.GetOption('clean'):
+cnf = Configure(env, custom_tests = libcfib_tests)
+if cnf.CheckHeader('unistd.h'):
+    cnf.env.Append(CPPDEFINES = '_CFIB_SYSAPI_POSIX')
+    system_api = "POSIX"
+    if cnf.CheckHeader('pthread.h'):
+        if cnf.CheckLib('pthread'):
+            cnf.env.Append(LIBS = ['pthread'])
         else:
-            print "Non-compliant POSIX system: missing pthread.h!"
+            print "Non-compliant POSIX system: missing -lpthread!"
             Exit(1)
-    elif cnf.CheckHeader('windows.h'):
-        cnf.env.Append(CPPDEFINES = '_CFIB_SYSAPI_WINDOWS')
-        system_api = "WINDOWS"
     else:
-        print "Unsupported platform."
+        print "Non-compliant POSIX system: missing pthread.h!"
         Exit(1)
-    if cnf.CheckC11ThreadLocal():
-        have_c11_thread_local = True
-    env = cnf.Finish()
-    print env['CPPDEFINES']
+elif cnf.CheckHeader('windows.h'):
+    cnf.env.Append(CPPDEFINES = '_CFIB_SYSAPI_WINDOWS')
+    system_api = "WINDOWS"
+else:
+    print "Unsupported platform."
+    Exit(1)
+if cnf.CheckC11ThreadLocal():
+    have_c11_thread_local = True
+env = cnf.Finish()
+print env['CPPDEFINES']
 
 nasm_env = env.Clone();
 nasm_env.Append(BUILDERS = {'NASMObject' : Builder(action = 'nasm -f $NASM_FORMAT $NASM_FLAGS -o $TARGET $SOURCE')})
