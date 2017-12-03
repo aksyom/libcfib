@@ -1,7 +1,17 @@
-root_env = Environment()
-# SCons is too smart ... need to tell it to fuck off
+# Build variables
+vars = Variables(None, ARGUMENTS)
+vars.Add(PathVariable('prefix', 'Install prefix', '/usr/local'))
+vars.Add(PathVariable('libdir', 'Library install dir', '${prefix}/lib'))
+
+# Root environment, cloned by SConscripts
+root_env = Environment(variables = vars)
 root_env['STATIC_AND_SHARED_OBJECTS_ARE_THE_SAME'] = True
 root_env.Append(CCFLAGS = ['-g'])
+
+# Generate help text for cli options
+Help(vars.GenerateHelpText(root_env))
+
+# SCons is too smart ... need to tell it to fuck off
 config_system_API = None
 config_system_ABI = 'sysv-amd64' # others: cdecl-x86, microsoft-x64, eabi-arm, aarch64-arm
 config_have_c11_thread_local = False
@@ -47,4 +57,8 @@ root_env = cnf.Finish()
 #print env['CPPDEFINES']
 
 Export('root_env', 'config_system_API', 'config_system_ABI', 'config_have_c11_thread_local')
-build_dict = SConscript('src/SConscript', variant_dir='build', duplicate=0)
+built_files = SConscript('src/SConscript', variant_dir='build', duplicate=0)
+
+# Install target
+root_env.Install('${libdir}', built_files['lib'])
+root_env.Alias('install', '${libdir}')
