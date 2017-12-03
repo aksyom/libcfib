@@ -10,10 +10,13 @@ extern "C" {
 extern _Thread_local cfib_t* _cfib_current;
 
 inline static cfib_t* cfib_get_current() {
+#ifndef NDEBUG
+    assert("CALL cfib_init_thread() BEFORE CALLING cfib_get_current() !!!" && _cfib_current != NULL);
+#endif
     return _cfib_current;
 }
 
-/*! Save state to sp1 and swap into sp2.
+/** @internal
  *
  * !!! Do not call this function directly; use cfib_swap() instead !!!
  *
@@ -25,6 +28,9 @@ inline static cfib_t* cfib_get_current() {
 void _cfib_swap(unsigned char** sp1, unsigned char* sp2);
 
 inline static void cfib_swap(cfib_t* to) {
+#ifndef NDEBUG
+    assert("CALL cfib_init_thread() BEFORE CALLING cfib_swap() !!!" && _cfib_current != NULL);
+#endif
     cfib_t* from = _cfib_current;
     _cfib_current = to;
     _cfib_swap(&from->sp, to->sp);

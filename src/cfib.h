@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdlib.h>
+#include <assert.h>
 
 /*! Default stack size.
  *
@@ -56,7 +57,6 @@ typedef struct _cfib_context_type {
 } cfib_t;
 
 #ifndef _CFIB_C11_H_
-cfib_t* cfib_get_current();
 #endif
 
 /*! Initialize a fiber for current thread.
@@ -110,11 +110,21 @@ cfib_t* cfib_init(cfib_t* context, void* start_routine, void* args, uint32_t ssi
  */
 inline static cfib_t* cfib_new(void* start_routine, void* args, uint32_t ssize) {
     cfib_t* c = malloc(sizeof(cfib_t));
+    assert("libcfib: cfib_new() failed to allocate memory for new fib !!!" && c != NULL);
     cfib_init(c, start_routine, args, ssize);
     return c;
 }
 
 #ifndef _CFIB_C11_H_
+
+#ifndef NDEBUG
+cfib_t* cfib_get_current();
+#else
+cfib_t* cfib_get_current__noassert__();
+#define cfib_get_current() cfib_get_current__noassert__()
+#endif
+
+#ifndef NDEBUG
 /*! Swap current fiber with the one provided as argument.
  *
  * Swaps current execution context to the one provided as an argument. That is,
@@ -126,7 +136,12 @@ inline static cfib_t* cfib_new(void* start_routine, void* args, uint32_t ssize) 
  * @remark It is ENTIRELY up to the programmer to keep tabs on different contexts.
  */
 void cfib_swap(cfib_t* to);
+#else
+void cfib_swap__noassert__(cfib_t *to);
+#define cfib_swap(to) cfib_swap__noassert__(to)
 #endif
+
+#endif /* #ifndef _CFIB_C11_H */
 
 /*! Unmap the stack memory of the provided context.
  *
