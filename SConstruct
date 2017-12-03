@@ -1,3 +1,5 @@
+import stupid
+
 test_c11_thread_local = """
 _Thread_local int test = 24;
 

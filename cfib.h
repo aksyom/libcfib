@@ -55,7 +55,9 @@ typedef struct _cfib_context_type {
     unsigned char* stack_floor;
 } cfib_t;
 
+#ifndef _CFIB_C11_H_
 cfib_t* cfib_get_current();
+#endif
 
 /*! Initialize a fiber for current thread.
  *
@@ -112,6 +114,7 @@ inline static cfib_t* cfib_new(void* start_routine, void* args, uint32_t ssize) 
     return c;
 }
 
+#ifndef _CFIB_C11_H_
 /*! Swap current fiber with the one provided as argument.
  *
  * Swaps current execution context to the one provided as an argument. That is,
@@ -123,6 +126,7 @@ inline static cfib_t* cfib_new(void* start_routine, void* args, uint32_t ssize) 
  * @remark It is ENTIRELY up to the programmer to keep tabs on different contexts.
  */
 void cfib_swap(cfib_t* to);
+#endif
 
 /*! Unmap the stack memory of the provided context.
  *
