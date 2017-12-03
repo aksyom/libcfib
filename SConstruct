@@ -1,7 +1,8 @@
 # Build variables
 vars = Variables(None, ARGUMENTS)
-vars.Add(PathVariable('prefix', 'Install prefix', '/usr/local'))
-vars.Add(PathVariable('libdir', 'Library install dir', '${prefix}/lib'))
+vars.Add(PathVariable('prefix', 'Common install prefix', '/usr/local'))
+vars.Add(PathVariable('includedir', "Header files' install dir", '${prefix}/include'))
+vars.Add(PathVariable('libdir', "Library files' install dir", '${prefix}/lib'))
 
 # Root environment, cloned by SConscripts
 root_env = Environment(variables = vars)
@@ -61,4 +62,7 @@ built_files = SConscript('src/SConscript', variant_dir='build', duplicate=0)
 
 # Install target
 root_env.Install('${libdir}', built_files['lib'])
-root_env.Alias('install', '${libdir}')
+root_env.Install('${includedir}', root_env.Glob('src/*.h'))
+_lib = root_env.Alias('install-lib', '${libdir}')
+_include = root_env.Alias('install-include', '${includedir}')
+root_env.Alias('install', [_lib, _include])
