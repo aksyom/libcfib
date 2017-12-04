@@ -1,5 +1,4 @@
 #include <stdio.h>
-#define NDEBUG
 #if _HAVE_C11_THREAD_LOCAL
 #include "cfib_C11.h"
 #else
@@ -10,7 +9,7 @@ cfib_t *main_context;
 
 void test_fiber(void *arg) {
     printf("test_fiber 1\n");
-    cfib_swap(main_context);
+    cfib_swap__noassert__(main_context);
     printf("test_fiber 2\n");
 }
 
@@ -24,8 +23,8 @@ int main(int argc, char** argv) {
     printf("current after init: %p\n", cfib_get_current());
     cfib_t* test_context = cfib_new((void*)test_fiber, NULL, 0);
     printf("main 1\n");
-    cfib_swap(test_context);
+    cfib_swap__noassert__(test_context);
     printf("main 2\n");
-    cfib_swap(test_context);
+    cfib_swap__noassert__(test_context);
     return 0;
 }
