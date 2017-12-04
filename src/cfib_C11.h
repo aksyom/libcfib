@@ -9,12 +9,18 @@ extern "C" {
 
 extern _Thread_local cfib_t* _cfib_current;
 
-inline static cfib_t* cfib_get_current() {
-#ifndef NDEBUG
-    assert("CALL cfib_init_thread() BEFORE CALLING cfib_get_current() !!!" && _cfib_current != NULL);
-#endif
+inline static cfib_t* cfib_get_current__noassert__() {
     return _cfib_current;
 }
+
+#ifndef NDEBUG
+inline static cfib_t* cfib_get_current() {
+    assert("CALL cfib_init_thread() BEFORE CALLING cfib_get_current() !!!" && _cfib_current != NULL);
+    return _cfib_current;
+}
+#else
+#define cfib_get_current() cfib_get_current__noassert__()
+#endif
 
 /** @internal
  *
@@ -27,14 +33,22 @@ inline static cfib_t* cfib_get_current() {
  */
 void _cfib_swap(unsigned char** sp1, unsigned char* sp2);
 
-inline static void cfib_swap(cfib_t* to) {
-#ifndef NDEBUG
-    assert("CALL cfib_init_thread() BEFORE CALLING cfib_swap() !!!" && _cfib_current != NULL);
-#endif
+inline static void cfib_swap__noassert__(cfib_t* to) {
     cfib_t* from = _cfib_current;
     _cfib_current = to;
     _cfib_swap(&from->sp, to->sp);
 }
+
+#ifndef NDEBUG
+inline static void cfib_swap(cfib_t* to) {
+    assert("CALL cfib_init_thread() BEFORE CALLING cfib_swap() !!!" && _cfib_current != NULL);
+    cfib_t* from = _cfib_current;
+    _cfib_current = to;
+    _cfib_swap(&from->sp, to->sp);
+}
+#else
+#define cfib_swap(to) cfib_swap__noassert__(to)
+#endif
 
 #ifdef __cplusplus
 } /* extern "C" { */

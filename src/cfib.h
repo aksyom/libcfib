@@ -117,10 +117,12 @@ inline static cfib_t* cfib_new(void* start_routine, void* args, uint32_t ssize) 
 
 #ifndef _CFIB_C11_H_
 
+cfib_t* cfib_get_current__noassert__();
+void cfib_swap__noassert__(cfib_t *to);
+
 #ifndef NDEBUG
 cfib_t* cfib_get_current();
 #else
-cfib_t* cfib_get_current__noassert__();
 #define cfib_get_current() cfib_get_current__noassert__()
 #endif
 
@@ -137,7 +139,6 @@ cfib_t* cfib_get_current__noassert__();
  */
 void cfib_swap(cfib_t* to);
 #else
-void cfib_swap__noassert__(cfib_t *to);
 #define cfib_swap(to) cfib_swap__noassert__(to)
 #endif
 
