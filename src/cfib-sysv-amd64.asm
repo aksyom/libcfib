@@ -60,8 +60,8 @@ _cfib_init_stack:
     push r8        ; push [r8] = 0x0, prevent gdb going apeshit
     sub rsp, 40     ; alloca [r15 - rbx]
     ; NOTE: now the stack is 8-byte aligned! This is necessary
-    ; because _co_swap and _co_exit require that the
-    ; next context stack pointer must be aligned to 8
+    ; because _cfib_swap requires that the next context stack pointer 
+    ; must be aligned to 8
     mov [rdi], rsp  ; save context sp
     mov rsp, r9     ; unpivot stack
     ret
