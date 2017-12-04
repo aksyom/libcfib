@@ -1,7 +1,7 @@
 # libcfib
 -lcfib: C Fibers, an implementation of co-operative threads of execution
 
-UPDATE: I finally uploaded the stuff I was working on my local repo.
+UPDATE: I finally uploaded the stuff I was working on my local repo. Currently only works on POSIX systems that use the SysV AMD64 ABI (Linux, BSD ...)
 
 Design goals:
 - NO inline assembler, it's ugly!
