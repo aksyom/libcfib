@@ -123,7 +123,7 @@ cfib_t* cfib_get_current() {
 #ifdef _CFIB_SYSAPI_POSIX
     cfib_t** tls = (cfib_t**)pthread_getspecific(_cfib_tls_key);
     assert("CALL cfib_init_thread() BEFORE CALLING cfib_get_current() !!!" && tls != NULL);
-    return *((cfib_t**)pthread_getspecific(_cfib_tls_key));
+    return *tls;
 #elif defined (_CFIB_SYSAPI_WINDOWS)
     #error "TODO: WINAPI support."
 #endif
@@ -132,7 +132,6 @@ cfib_t* cfib_get_current() {
 cfib_t* cfib_get_current__noassert__() {
 #ifdef _CFIB_SYSAPI_POSIX
     //fprintf(stderr, "cfib_get_current__noassert__()\n");
-    cfib_t** tls = (cfib_t**)pthread_getspecific(_cfib_tls_key);
     return *((cfib_t**)pthread_getspecific(_cfib_tls_key));
 #elif defined (_CFIB_SYSAPI_WINDOWS)
     #error "TODO: WINAPI support."
