@@ -16,3 +16,5 @@ Design goals:
 so that every person who reads it while looking at the source actually LEARN to
 implement similar functionality on their own!
 - keep a reasonably opinionated approach to what works and what doesn't
+
+UPDATE: I now have a minimal implementation with basic features working on SYSV/AMD64 compatible platforms (BSDs, Linux etc). Will probably upload it here later ...
