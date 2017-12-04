@@ -8,17 +8,16 @@ extern _cfib_exit_thread
 section .text
 
 ; Call initializer, reverse-called by _cfib_swap.
-; Previous to _cfib_swap, the stack was initialized by _cfib_init_stack.
-; Now, _cfib_swap has already popped all callee saved regs (48 bytes)
-; and the stack is aligned to 8-byte boundary.
-; - First quad in the stack is 8-bytes of bogus, put there
-; only to align the stack pointer to 8-byte boundary.
-; - The next two quads in stack are the 1st and 2nd arguments
+; The stack was initialized by _cfib_init_stack aligned to 8-byte boundary.
+; Now, _cfib_swap has already popped all callee saved regs (48 bytes),
+; and stack is aligned at 16-byte boundary.
+;
+; _cfib_init_stack saved the callable function and its argument pointer
+; to r14 and r15 of the stack.
 _cfib_call:
-    pop rdi ; 1st arg rdi = void* args
-    pop rsi ; rsi = void (*func)(void*)
+    mov rdi, r15 ; 1st argument rdi = void* args
     ; stack is now aligned to 16-byte boundary
-    call rsi ; call the function ptr
+    call r14 ; call the function ptr
     ; if the func returned a value, we would handle rax here ...
 %ifndef _ELF_SHARED
     call _cfib_exit_thread
@@ -43,11 +42,6 @@ _cfib_init_stack:
     ; done so that we can point rbp to it later.
     ; This will stop gdb from going apeshit!
     mov r8, rsp    ; r8 (as rbp) = stack bottom, value 0x0
-    ; push 2nd and 3rd argument to stack
-    ; these are popped by _cfib_call
-    ; into 1st and 2nd argument regs respectively
-    push rsi        ; 2nd arg rsi = void (*func)(void*)
-    push rdx        ; 3rd arg rdx = void* args
     %ifdef _ELF_SHARED
     ; we are relocated, so we cannot know beforehand what is the abs address
     ; of our initial call vector ... but NASM allows us to get that abs address
@@ -57,11 +51,16 @@ _cfib_init_stack:
     %else
     push qword _cfib_call ; push addr of _cfib_call to stack
     %endif
-    push r8        ; push [r8] = 0x0, prevent gdb going apeshit
-    sub rsp, 40     ; alloca [r15 - rbx]
+    push r8         ; push [r8] = 0x0, prevent gdb going apeshit
+    sub rsp, 24     ; stack space for r13, r12, and rbx
+    ; push 2nd and 3rd arguments, that is, rsi and rdx into the pivoted stack
+    ; registers r14, and r15.
+    push rsi        ; [r14] = void (*func)(void*)
+    push rdx        ; [r15] = void* args
     ; NOTE: now the stack is 8-byte aligned! This is necessary
-    ; because _cfib_swap requires that the next context stack pointer 
-    ; must be aligned to 8
+    ; because when _cfib_swap returns to _cfib_call, the 8-byte
+    ; addr of _cfib_call is popped, and alignment becomes 16-bytes.
+    ; _cfib_call ASSUMES that the stack is 16-byte aligned!
     mov [rdi], rsp  ; save context sp
     mov rsp, r9     ; unpivot stack
     ret
