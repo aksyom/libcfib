@@ -16,8 +16,7 @@ section .text
 ; to r14 and r15 of the stack.
 _cfib_call:
     mov rdi, r15 ; 1st argument rdi = void* args
-    ; stack is now aligned to 16-byte boundary
-    call r14 ; call the function ptr
+    call r14 ; call the function ptr from r14
     ; if the func returned a value, we would handle rax here ...
 %ifndef _ELF_SHARED
     call _cfib_exit_thread
@@ -72,7 +71,6 @@ _cfib_init_stack:
 _cfib_swap:
     ; by convention, stack is now aligned to 8-byte boundary
     push rbp
-    mov rbp, rsp
     ; push callee saved registers
     push rbx
     push r12
