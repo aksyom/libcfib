@@ -1,23 +1,27 @@
 default rel
 bits 64
 align 16
-global _cfib_call:function
 global _cfib_init_stack:function
 global _cfib_swap:function
 extern _cfib_exit_thread
 section .text
 
 ; Call initializer, reverse-called by _cfib_swap.
-; The stack was initialized by _cfib_init_stack aligned to 8-byte boundary.
-; Now, _cfib_swap has already popped all callee saved regs (48 bytes),
-; and stack is aligned at 16-byte boundary.
+; The stack was initialized by _cfib_init_stack(), aligned at 8-byte boundary.
+; Now, _cfib_swap() has already popped all callee saved regs (48 bytes),
+; and returned to this function (popping addr), and stack is aligned at 
+; 16-byte boundary.
 ;
-; _cfib_init_stack saved the callable function and its argument pointer
-; to r14 and r15 of the stack.
+; _cfib_init_stack() saved the callable function and its argument pointer
+; to r15 and r14 positions of the stack, and ince they were popped by
+; _cfib_swap(), we can use them as arguments.
+;
+; Arguments:
+; r14 = void* args, pointer to fiber arguments
+; r15 = void (*func)(void*), pointer to fiber executed function
 _cfib_call:
-    mov rdi, r15 ; 1st argument rdi = void* args
-    call r14 ; call the function ptr from r14
-    ; if the func returned a value, we would handle rax here ...
+    mov rdi, r14 ; 1st argument rdi = void* args
+    call r15 ; call the function ptr from r15
 %ifndef _ELF_SHARED
     call _cfib_exit_thread
 %else
@@ -25,49 +29,65 @@ _cfib_call:
 %endif
 
 ; This function synthesizes an initial stack for
-; a context, so that _cfib_swap can pivot into it!
+; a context, so that _cfib_swap can return into it, and continue
+; execution from _cfib_call.
+;
+; Arguments:
 ; rdi = void** sp, pointer to rsp of the allocated stack
-; rsi = void (*func)(void*), co-routine function
-; rdx = void *args, arguments for co-routine
+; rsi = void (*func)(void*), fiber executed function pointer
+; rdx = void *args, arguments for the fiber
 _cfib_init_stack:
-    mov r9, rsp     ; save rsp for unpivoting
-    mov rsp, [rdi]  ; pivot stack to 1st arg (rdi)
-    ; NOTE: empty stack's rsp should be aligned to page,
-    ; and thus it should also must be aligned to 16-bytes.
-    sub rsp, 8      ; add 8 bytes of bogus for alignment
-    xor rax, rax    ; rax = 0
-    push rax        ; push 8-bytes of zero
-    ; NOTE: the zeroes we pushed to the stack was
-    ; done so that we can point rbp to it later.
-    ; This will stop gdb from going apeshit!
-    mov r8, rsp    ; r8 (as rbp) = stack bottom, value 0x0
+    ; Set rcx as base pointer to the new stack
+    ; NOTE: empty stack's pointer should be aligned to page,
+    ; and thus it ishould also must be aligned to 16-bytes.
+    ; The pointer points to stack ceiling, which is an invalid
+    ; address, the first element starts at -8
+    mov rcx, [rdi]
+    ; Make space in the new stack for following elements
+    ; [rcx + 0]:[rcx + 40] regs r15:r12, rbx and rbp (48 bytes)
+    ; [rcx + 48] return vector to _cfib_call (8-bytes)
+    ; [rcx + 56] 8-bytes of zero for rbp termination
+    ; [rcx + 64] 8-bytes for alignment
+    sub rcx, 72
+    ; [rcx + 0] r15 = rsi, pointer to function executed by the fiber
+    mov [rcx + 0], rsi
+    ; [rcx + 8] r14 = rdx, the void* argument pointer for fiber function
+    mov [rcx + 8], rdx
+    ; load address of [rcx + 56] into rax
+    lea rax, [rcx + 56]
+    ; [rcx + 40] rbp will be pointed to [rcx + 56] which will be zeroed later.
+    ; When the rbp points to a memory location with zero pointer value, it will
+    ; prevent gdb from going apeshit during stack frame unwinding.
+    mov [rcx + 40], rax
+    ; Next we must set the return vector to _cfib_call into [rcx + 48], and
+    ; this is done differently whether we are dynamically linked and relocated
+    ; or statically linked
     %ifdef _ELF_SHARED
-    ; we are relocated, so we cannot know beforehand what is the abs address
+    ; We are relocated, so we cannot know beforehand what is the abs address
     ; of our initial call vector ... but NASM allows us to get that abs address
     ; by loading the address from symbol into register
-    mov rcx, _cfib_call
-    push rcx    ; absolute addr of _cfib_call is in rcx, push it to stack!
+    mov r8, _cfib_call
+    mov [rcx + 48], r8
     %else
-    push qword _cfib_call ; push addr of _cfib_call to stack
+    ; We are statically linked, and thus we can move the address of _cfib_call
+    ; directly to the stack, it will be an absolute address
+    mov qword [rcx + 48], _cfib_call
     %endif
-    push r8         ; push [r8] = 0x0, prevent gdb going apeshit
-    sub rsp, 24     ; stack space for r13, r12, and rbx
-    ; push 2nd and 3rd arguments, that is, rsi and rdx into the pivoted stack
-    ; registers r14, and r15.
-    push rsi        ; [r14] = void (*func)(void*)
-    push rdx        ; [r15] = void* args
-    ; NOTE: now the stack is 8-byte aligned! This is necessary
-    ; because when _cfib_swap returns to _cfib_call, the 8-byte
-    ; addr of _cfib_call is popped, and alignment becomes 16-bytes.
-    ; _cfib_call ASSUMES that the stack is 16-byte aligned!
-    mov [rdi], rsp  ; save context sp
-    mov rsp, r9     ; unpivot stack
+    ; Set rax to zero, consequently our return value becomes 0, although
+    ; the C function prototype won't declare a return type :P
+    xor rax, rax
+    ; Set 8-bytes of zero for rbp termination. The rbp of the new stack
+    ; (in position [rcx + 40]) was set to point into this address.
+    mov [rcx + 56], rax
+    ; Save the modified stack pointer value
+    mov [rdi], rcx
     ret
 
-; Swap context from current to next
+; Swap context from current to next.
+;
+; Arguments:
 ; rdi = void**, pointer to current context rsp
 ; rsi = void*, rsp of the next context
-; NOTE: both pointers MUST be aligned to 8-byte boundary!
 _cfib_swap:
     ; by convention, stack is now aligned to 8-byte boundary
     push rbp
