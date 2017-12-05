@@ -31,8 +31,10 @@ for variant_cflags, variant_suffix in variants:
     e_shared.Append(LIBS = ['cfib' + variant_suffix])
     e_static.Append(LIBS = ['cfib' + variant_suffix + '_static'])
     test_obj = e.Object('test_cfib' + variant_suffix, 'test_cfib.c')
+    bench_obj = e.Object('benchmark_cfib' + variant_suffix, 'benchmark_cfib.c')
     _bin += [e_shared.Program(target = 'test_cfib' + variant_suffix, source = [test_obj])]
     _bin += [e_static.Program(target = 'test_cfib' + variant_suffix + '_static', source = [test_obj])]
+    _bin += [e_static.Program(target = 'benchmark_cfib' + variant_suffix, source = [bench_obj])]
 
 _ret = {'test_bin': _bin, 'lib': _lib}
 Return('_ret')
