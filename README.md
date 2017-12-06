@@ -8,7 +8,7 @@ I decided on the LGPLv3 license for this project because there are already other
 Design goals (thus far):
 - NO inline assembler, it's ugly!
 - reasonable usage of macros where it makes for speed without breaking things
-- aim for minimalist interface and simple, intelligible design
+- aim for minimalist API and simple, intelligible design
 - all complex operations should be done with C functions
 - stack switching and context swapping done with small and simple assembler routines
 - assembler routines in separate files sorted by calling convention and CPU architecture
