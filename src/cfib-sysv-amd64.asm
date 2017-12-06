@@ -66,7 +66,7 @@ _cfib_init_stack:
     ; We are relocated, so we cannot know beforehand what is the abs address
     ; of our initial call vector ... but NASM allows us to get that abs address
     ; by loading the address from symbol into register
-    mov r8, _cfib_call
+    lea r8, _cfib_call
     mov [rcx + 48], r8
     %else
     ; We are statically linked, and thus we can move the address of _cfib_call
@@ -89,15 +89,13 @@ _cfib_init_stack:
 ; rdi = void**, pointer to current context rsp
 ; rsi = void*, rsp of the next context
 _cfib_swap:
-    ; by convention, stack is now aligned to 8-byte boundary
     push rbp
-    ; push callee saved registers
+    ; Push callee saved registers
     push rbx
     push r12
     push r13
     push r14
     push r15
-    ; Stack is aligned to 8-byte boundary.
     ; Save stack pointer to addr pointed by 1st argument (rdi)
     mov [rdi], rsp
     ; Pivot stack to addr pointed by 2nd argument (rsi)
