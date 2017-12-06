@@ -66,7 +66,7 @@ _cfib_init_stack:
     ; We are relocated, so we cannot know beforehand what is the abs address
     ; of our initial call vector ... but NASM allows us to get that abs address
     ; by loading the address from symbol into register
-    lea r8, _cfib_call
+    lea r8, [_cfib_call]
     mov [rcx + 48], r8
     %else
     ; We are statically linked, and thus we can move the address of _cfib_call
