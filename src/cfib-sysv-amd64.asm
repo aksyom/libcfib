@@ -89,26 +89,38 @@ _cfib_init_stack:
 ; rdi = void**, pointer to current context rsp
 ; rsi = void*, rsp of the next context
 _cfib_swap:
-    ; Push callee saved registers
     sub rsp, 48
+    ; store callee saved registers
     mov [rsp + 40], rbp
     mov [rsp + 32], rbx
     mov [rsp + 24], r12
     mov [rsp + 16], r13
     mov [rsp +  8], r14
     mov [rsp +  0], r15
+    ;push rbp
+    ;push rbx
+    ;push r12
+    ;push r13
+    ;push r14
+    ;push r15
     ; Stack is aligned to 8-byte boundary.
     ; Save stack pointer to addr pointed by 1st argument (rdi)
     mov [rdi], rsp
     ; Pivot stack to addr pointed by 2nd argument (rsi)
     mov rsp, rsi
     ; Pop callee saved registers
-    mov r15, [rsp +  0]
-    mov r14, [rsp +  8]
-    mov r13, [rsp + 16]
-    mov r12, [rsp + 24]
-    mov rbx, [rsp + 32]
     mov rbp, [rsp + 40]
+    mov rbx, [rsp + 32]
+    mov r12, [rsp + 24]
+    mov r13, [rsp + 16]
+    mov r14, [rsp +  8]
+    mov r15, [rsp +  0]
     add rsp, 48
+    ;pop r15
+    ;pop r14
+    ;pop r13
+    ;pop r12
+    ;pop rbx
+    ;pop rbp
     ; ... and return to next context
     ret
