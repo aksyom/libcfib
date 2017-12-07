@@ -1,6 +1,6 @@
 _bin = []
 _lib = []
-Import('root_env', 'config_system_API', 'config_system_ABI', 'config_have_c11_thread_local')
+Import('*')
 env = root_env.Clone()
 env.Append(CPPDEFINES = '_CFIB_SYSAPI_' + config_system_API)
 
@@ -14,7 +14,8 @@ else:
     Exit(1)
 nasm_shared_obj = nasm_env.NASMObject('cfib' + nasm_suffix + '.os', 'cfib' + nasm_suffix + '.asm', NASM_FLAGS='-D _ELF_SHARED=1')
 nasm_static_obj = nasm_env.NASMObject('cfib' + nasm_suffix + '.o', 'cfib' + nasm_suffix + '.asm')
-
+if config_have_c11_atomics:
+    env.Append(CPPDEFINES = '_HAVE_C11_ATOMICS')
 env.Append(LIBPATH = ['.'])
 variants = [('', '')]
 if config_have_c11_thread_local:

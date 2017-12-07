@@ -17,22 +17,22 @@ config_system_API = None
 config_system_ABI = 'sysv-amd64' # others: cdecl-x86, microsoft-x64, eabi-arm, aarch64-arm
 config_have_c11_thread_local = False
 
-test_c11_thread_local = """
-_Thread_local int test = 24;
-
-int main(int argc, char** argv) {
-    test = test * 0;
-    return test;
-}
-"""
-
 def check_c11_thread_local(context):
     context.Message('Checking for C11 _Thread_local ... ')
-    result = context.TryLink(test_c11_thread_local, '.c')
+    result = context.TryLink(open('config_tests/test_c11_thread_local.c').read(), '.c')
     context.Result(result)
     return result
 
-libcfib_tests = {'CheckC11ThreadLocal' : check_c11_thread_local}
+def check_c11_atomics(context):
+    context.Message('Checking for C11 _Atomic ... ')
+    result = context.TryLink(open('config_tests/test_c11_atomics.c').read(), '.c')
+    context.Result(result)
+    return result
+
+libcfib_tests = {
+    'CheckC11ThreadLocal' : check_c11_thread_local,
+    'CheckC11Atomics' : check_c11_atomics
+}
 
 #if not env.GetOption('clean'):
 cnf = Configure(root_env, custom_tests = libcfib_tests)
@@ -54,10 +54,12 @@ else:
     Exit(1)
 if cnf.CheckC11ThreadLocal():
     config_have_c11_thread_local = True
+if cnf.CheckC11Atomics():
+    config_have_c11_atomics = True
 root_env = cnf.Finish()
 #print env['CPPDEFINES']
 
-Export('root_env', 'config_system_API', 'config_system_ABI', 'config_have_c11_thread_local')
+Export('root_env', 'config_system_API', 'config_system_ABI', 'config_have_c11_thread_local', 'config_have_c11_atomics')
 built_files = SConscript('src/SConscript', variant_dir='build', duplicate=0)
 
 # Install target

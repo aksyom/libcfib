@@ -70,13 +70,12 @@ typedef struct _cfib_context_type {
  */
 cfib_t* cfib_init_thread();
 
-/*! Initialize a fiber.
+/*! Allocates a fiber and initialies it's stack.
  *
- * This function initializes a fiber so that it can be swap():ed into.
- * Specifically, a stack is mapped and initialized so that when
- * the fiber is swap():ed into, the function 'start_routine' get called
- * with 'args' as it's 1st and only argument.
- *
+ * This function allocates a new fiber and it's stack, then initializes the 
+ * stack so that fiber execution begins at 'start_routine' -function, and
+ * the function receives the 'args' as it's argument.
+ * 
  * The argument 'start_routine' must be a pointer to a function which has
  * the signature of void (*)(TYPE *), where TYPE is any type you desire.
  * In layman terms, the function for 'start_routine'
@@ -85,35 +84,12 @@ cfib_t* cfib_init_thread();
  *
  * The argument 'start_routine' should always be explicitly cast to void*
  *
- * This function returns the same fiber context pointer that was passed as argument.
- *
- * @param[out] context pointer to the context to be initialized, need not be zeroed.
  * @param[in] start_routine a pointer to a function to be executed when cfib_swap() is called on this context.
  * @param[in] args pointer to argument data passed as 1st argument to start_routine.
  * @param[in] ssize the maximum size of the stack, will be automatically rounded to page boundary.
- * @return the context pointer provided as first argument.
+ * @return pointer to the new fiber, or NULL if memory allocation failed.
  */
-cfib_t* cfib_init(cfib_t* context, void* start_routine, void* args, uint32_t ssize);
-
-/*! Allocate and initialize a new fiber context.
- *
- * This is just a convenience wrapper that allocates a new cfib_t*
- * context pointer and then passes all the arguments to cfib_init(), then
- * returns the allocated and initialized context.
- *
- * Read the documentation for cfib_init() for a more detailed explanation.
- *
- * @param[in] start_routine a pointer to a function to be executed when cfib_swap() is called on this context.
- * @param[in] args pointer to argument data passed as 1st argument to start_routine.
- * @param[in] ssize the maximum size of the stack, will be automatically rounded to page boundary.
- * @return pointer to the allocated and initialized fiber context
- */
-inline static cfib_t* cfib_new(void* start_routine, void* args, uint32_t ssize) {
-    cfib_t* c = malloc(sizeof(cfib_t));
-    assert("libcfib: cfib_new() failed to allocate memory for new fib !!!" && c != NULL);
-    cfib_init(c, start_routine, args, ssize);
-    return c;
-}
+cfib_t* cfib_new(void* start_routine, void* args, uint32_t ssize);
 
 #ifndef _CFIB_C11_H_
 
