@@ -56,9 +56,10 @@ typedef struct _cfib_context_type {
     unsigned char* stack_floor;
 } cfib_t;
 
-#ifndef _CFIB_C11_H_
-#endif
+cfib_t* cfib_init_thread__prof__();
+cfib_t* cfib_new__prof__(void* start_routine, void* args, uint32_t ssize);
 
+#ifndef CFIB_PROFILE
 /*! Initialize a fiber for current thread.
  *
  * This function MUST be called in a thread before cfib_swap() function can be
@@ -69,7 +70,11 @@ typedef struct _cfib_context_type {
  * @return a context for this thread's main fiber.
  */
 cfib_t* cfib_init_thread();
+#else
+#define cfib_init_thread() cfib_init_thread__prof__()
+#endif
 
+#ifndef CFIB_PROFILE
 /*! Allocates a fiber and initialies it's stack.
  *
  * This function allocates a new fiber and it's stack, then initializes the 
@@ -90,9 +95,11 @@ cfib_t* cfib_init_thread();
  * @return pointer to the new fiber, or NULL if memory allocation failed.
  */
 cfib_t* cfib_new(void* start_routine, void* args, uint32_t ssize);
+#else
+#define cfib_new(start_routine, args, ssize) cfib_new__prof__(start_routine, args, ssize)
+#endif
 
 #ifndef _CFIB_C11_H_
-
 cfib_t* cfib_get_current__noassert__();
 void cfib_swap__noassert__(cfib_t *to);
 

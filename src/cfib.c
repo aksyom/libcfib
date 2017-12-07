@@ -19,6 +19,7 @@
 #include <unistd.h>
 #include <sys/mman.h>
 #include <pthread.h>
+#include <signal.h>
 
 #ifndef MAP_ANONYMOUS
 #define MAP_ANONYMOUS MAP_ANON
@@ -50,19 +51,82 @@ static inline uint_fast32_t _align_size_to_page(uint_fast32_t size) {
     return size;
 }
 
-#ifdef _HAVE_C11_ATOMICS
 static void*  _prof_map = NULL;
+static size_t _prof_nfaults = 0;
 
+#ifdef _HAVE_C11_ATOMICS
 static atomic_flag _prof_map_lock = ATOMIC_FLAG_INIT;
 #endif
 
 #ifdef _CFIB_SYSAPI_POSIX
 static pthread_once_t _prof_init_once = PTHREAD_ONCE_INIT;
 
+static struct sigaction _prof_oact;
+
+void _prof_segv_handler(int sig, siginfo_t *nfo, void *uap) {
+    if(sig != SIGSEGV)
+        goto next_handler;
+    if(nfo->si_addr == NULL)
+        goto next_handler;
+    int page_size = _get_sys_page_size();
+    void *stk_addr = nfo->si_addr - ((uintptr_t)nfo->si_addr % (1<<20));
+    void *page_addr = nfo->si_addr - ((uintptr_t)nfo->si_addr % page_size);
+    uintptr_t i0 = ((uintptr_t)stk_addr>>12) & 0xffff;
+    uintptr_t i1 = ((uintptr_t)stk_addr>>(12 + 16)) & 0xffff;
+    fprintf(stderr, "_prof_segv_handler(): stk_addr = %p, page_addr= %p\n", stk_addr, page_addr);
+    fprintf(stderr, "_prof_segv_handler(): i0 = %lu, i1 = %lu\n", i0, i1);
+    void** map0 = (void**)_prof_map;
+    fprintf(stderr, "_prof_segv_handler(): map0[%lu] = %p\n", i0, map0[i0]);
+    if(map0[i0] == NULL)
+        goto next_handler;
+    void* prof_data = ((void**)(map0[i0]))[i1];
+    fprintf(stderr, "_prof_segv_handler(): prof_data = %p\n", prof_data);
+    if(prof_data == NULL)
+        goto next_handler;
+    if(page_addr == stk_addr) {
+        fprintf(stderr, "libcfib: Stack break @ %p\n", page_addr);
+        goto next_handler;
+    }
+    int res;
+    res = mprotect(page_addr, page_size, PROT_READ|PROT_WRITE);
+    assert("Profiling SIGSEGV handler failed to remove guard page from stack!" && res == 0);
+    _prof_nfaults++;
+exit:
+    return;
+next_handler:
+    if(_prof_oact.sa_flags & SA_SIGINFO)
+        _prof_oact.sa_sigaction(sig, nfo, uap);
+    else
+        _prof_oact.sa_handler(sig);
+}
+
 static void _prof_init() {
-    uint_fast32_t pgsz = _get_sys_page_size();
     _prof_map = mmap(0, 1<<16, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0);
-    assert(_prof_map != MAP_FAILED);
+    assert("Profiling was enabled, but profiler map allocation failed!" &&  _prof_map != MAP_FAILED);
+    size_t sigstk_size = MINSIGSTKSZ + 16 * _get_sys_page_size();
+    void *sigstk_mem = mmap(0, sigstk_size, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0);
+    stack_t sigstk = {
+        .ss_sp = sigstk_mem,
+        .ss_size = sigstk_size,
+        .ss_flags = 0
+    };
+    assert( sigaltstack(&sigstk, NULL) == 0 );
+    sigset_t sigmask;
+    sigaddset(&sigmask, SIGTSTP);
+    sigaddset(&sigmask, SIGCONT);
+    sigaddset(&sigmask, SIGCHLD);
+    sigaddset(&sigmask, SIGTTIN);
+    sigaddset(&sigmask, SIGTTOU);
+    sigaddset(&sigmask, SIGIO);
+    sigaddset(&sigmask, SIGWINCH);
+    sigaddset(&sigmask, SIGINFO);
+    struct sigaction act = {
+        .sa_sigaction = _prof_segv_handler,
+        .sa_flags = SA_SIGINFO|SA_ONSTACK|SA_RESTART,
+        .sa_mask = sigmask
+    };
+    assert( sigaction(SIGSEGV, &act, &_prof_oact) == 0 );
+    fprintf(stderr, "libcfib: Fiber stack profiler enabled.\n");
 }
 #elif defined(_CFIB_SYSAPI_WINDOWS)
     #error "TODO: WINAPI support."
@@ -176,10 +240,10 @@ _errexit:
 
 cfib_t* cfib_new__prof__(void* start_routine, void* args, uint_fast32_t ssize)
 {
+#ifdef _HAVE_C11_ATOMICS
     cfib_t* context = (cfib_t*)calloc(1, sizeof(cfib_t));
     if(context == NULL)
         return NULL;
-#ifdef _HAVE_C11_ATOMICS
     void *stack_ceiling = NULL;
     void* vres = NULL;
     int res = posix_memalign(&stack_ceiling, 1<<20, 1<<20);
@@ -204,14 +268,16 @@ cfib_t* cfib_new__prof__(void* start_routine, void* args, uint_fast32_t ssize)
     void** map1 = (void**)(map0[i0]);
     map1[i1] = stack_ceiling;
     atomic_flag_clear_explicit(&_prof_map_lock, memory_order_release);
+    fprintf(stderr, "__prof__: i0 = %lu, i1 = %lu, map0[%lu] = %p, map1[%lu] = %p\n", i0, i1, i0, map0[i0], i1, map1[i1]);
+    fprintf(stderr, "libcfib: New profiled stack @ [%p - %p]\n", (void*)context->stack_ceiling, (void*)context->stack_floor);
     return context;
+_errexit:
+    free(context);
+    return NULL;
 #else
     fprintf(stderr, "libcfib: WARNING: profiling is disabled!\n");
     return cfib_new(start_routine, args, ssize);
 #endif
-_errexit:
-    free(context);
-    return NULL;
 }
 
 void cfib_unmap(cfib_t* context) {
