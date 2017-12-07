@@ -1,9 +1,9 @@
 # libcfib
 -lcfib: C Fibers, an implementation of co-operative threads of execution
 
-UPDATE: I finally uploaded the stuff I was working on my local repo. Currently only works on POSIX systems that use the SysV AMD64 ABI (Linux, BSD ...). Next I am going to concentrate on figuring out how to properly document the library API. Probably will end up integrating Doxygen with SConstruct. Later, finish the cdecl-x86 ABI, and start working on Windows support.
+UPDATE: Change of project focus, now I am working on implementing a fiber stack profiler. The fiber stack profiler is a "mode" during which the library tracks each fiber's stack as it grows down page by page. Once finished, it will be very useful tool for figuring out the minimun fiber stack size your program needs. That's a lot better than guesswork, especially for people who know little about low level programming concepts.
 
-I decided on the LGPLv3 license for this project because there are already other fiber-like libraries available, most with less restrictive licenses, some more extensive than this. The main difference between this project and others is that my goals for the end product is for it to be as minimalist as possible; that is, implement only the mandatory features. Being minimalist makes for more easily intelligible source. In fact, I intend to develop this software so that people can learn how it works, and make their own variant if this one doesn't fit their needs.
+I decided on the LGPLv3 license for this project because a) I don't want corporations and evil capitalists to take my labour and use it to make profit without giving anything back and b) there are already other fiber-like libraries available, most with less restrictive licenses, some more extensive than this. The main difference between this project and others is that my goals for the end product is for it to be as minimalist as possible; that is, implement only the mandatory features. Being minimalist makes for more easily intelligible source. In fact, I intend to develop this software so that people can learn how it works, and make their own variant if this one doesn't fit their needs.
 
 Design goals (thus far):
 - NO inline assembler, it's ugly!
