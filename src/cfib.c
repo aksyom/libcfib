@@ -1,4 +1,4 @@
-#if _HAVE_C11_THREAD_LOCAL
+#if _WITH_C11_THREAD_LOCAL
 #include "cfib_C11.h"
 #else
 #include "cfib.h"
@@ -8,9 +8,9 @@
 #include <stdio.h>
 #include <string.h>
 
-#ifdef _CFIB_SYSAPI_POSIX
+#ifdef _WITH_SYSAPI_POSIX
 
-#ifdef _HAVE_C11_ATOMICS
+#ifdef _WITH_C11_ATOMICS
 #include <stdatomic.h>
 #else
 #warning "Compiler does not support C11 _Atomic, profiling is disabled!"
@@ -25,7 +25,7 @@
 #define MAP_ANONYMOUS MAP_ANON
 #endif
 
-#elif defined (_CFIB_SYSAPI_WINDOWS)
+#elif defined (_WITH_SYSAPI_WINDOWS)
     #error "TODO: WINAPI support."
 #endif
 
@@ -34,12 +34,12 @@
 void _cfib_init_stack(unsigned char** sp, void* start_addr, void* args);
 
 static inline uint_fast32_t _get_sys_page_size() {
-#ifdef _CFIB_SYSAPI_POSIX
+#ifdef _WITH_SYSAPI_POSIX
     static uint_fast32_t cached_size = 0;
     if(cached_size == 0)
         cached_size = (uint_fast32_t)sysconf(_SC_PAGE_SIZE);
     return cached_size;
-#elif _CFIB_SYSAPI_WINDOWS
+#elif defined(_WITH_SYSAPI_WINDOWS)
     #error "TODO: WINAPI support."
 #endif
 }
@@ -54,20 +54,20 @@ static inline uint_fast32_t _align_size_to_page(uint_fast32_t size) {
 static void*  _prof_map = NULL;
 static size_t _prof_nfaults = 0;
 
-#ifdef _HAVE_C11_ATOMICS
+#ifdef _WITH_C11_ATOMICS
 static atomic_flag _prof_map_lock = ATOMIC_FLAG_INIT;
 #endif
 
-#ifdef _CFIB_SYSAPI_POSIX
+#ifdef _WITH_SYSAPI_POSIX
 static pthread_once_t _prof_init_once = PTHREAD_ONCE_INIT;
 
 static struct sigaction _prof_oact;
 
 void _prof_segv_handler(int sig, siginfo_t *nfo, void *uap) {
     if(sig != SIGSEGV)
-        goto next_handler;
+        goto next;
     if(nfo->si_addr == NULL)
-        goto next_handler;
+        goto next;
     int page_size = _get_sys_page_size();
     void *stk_addr = nfo->si_addr - ((uintptr_t)nfo->si_addr % (1<<20));
     void *page_addr = nfo->si_addr - ((uintptr_t)nfo->si_addr % page_size);
@@ -75,25 +75,27 @@ void _prof_segv_handler(int sig, siginfo_t *nfo, void *uap) {
     uintptr_t i1 = ((uintptr_t)stk_addr>>(12 + 16)) & 0xffff;
     fprintf(stderr, "_prof_segv_handler(): stk_addr = %p, page_addr= %p\n", stk_addr, page_addr);
     fprintf(stderr, "_prof_segv_handler(): i0 = %lu, i1 = %lu\n", i0, i1);
+    //while(atomic_flag_test_and_set_explicit(&_prof_map_lock, memory_order_relaxed));
     void** map0 = (void**)_prof_map;
     fprintf(stderr, "_prof_segv_handler(): map0[%lu] = %p\n", i0, map0[i0]);
     if(map0[i0] == NULL)
-        goto next_handler;
+        goto next;
     void* prof_data = ((void**)(map0[i0]))[i1];
     fprintf(stderr, "_prof_segv_handler(): prof_data = %p\n", prof_data);
     if(prof_data == NULL)
-        goto next_handler;
+        goto next;
     if(page_addr == stk_addr) {
         fprintf(stderr, "libcfib: Stack break @ %p\n", page_addr);
-        goto next_handler;
+        goto next;
     }
-    int res;
-    res = mprotect(page_addr, page_size, PROT_READ|PROT_WRITE);
+    //atomic_flag_clear_explicit(&_prof_map_lock, memory_order_release);
+    int res = mprotect(page_addr, page_size, PROT_READ|PROT_WRITE);
     assert("Profiling SIGSEGV handler failed to remove guard page from stack!" && res == 0);
     _prof_nfaults++;
-exit:
     return;
-next_handler:
+//next_clear:
+//    atomic_flag_clear_explicit(&_prof_map_lock, memory_order_release);
+next:
     if(_prof_oact.sa_flags & SA_SIGINFO)
         _prof_oact.sa_sigaction(sig, nfo, uap);
     else
@@ -128,15 +130,15 @@ static void _prof_init() {
     assert( sigaction(SIGSEGV, &act, &_prof_oact) == 0 );
     fprintf(stderr, "libcfib: Fiber stack profiler enabled.\n");
 }
-#elif defined(_CFIB_SYSAPI_WINDOWS)
+#elif defined(_WITH_SYSAPI_WINDOWS)
     #error "TODO: WINAPI support."
 #else
     #error "Unsupported platform."
 #endif
 
-#ifdef _HAVE_C11_THREAD_LOCAL
+#ifdef _WITH_C11_THREAD_LOCAL
 _Thread_local cfib_t* _cfib_current = NULL;
-#elif defined (_CFIB_SYSAPI_POSIX)
+#elif defined (_WITH_SYSAPI_POSIX)
 pthread_key_t _cfib_tls_key;
 
 static pthread_once_t _cfib_init_tls_once = PTHREAD_ONCE_INIT;
@@ -145,20 +147,20 @@ static void _cfib_init_tls() {
     int ret = pthread_key_create(&_cfib_tls_key, NULL);
     assert("libcfib: pthread_key_create() failed to init TLS key !!!" && ret == 0);
 }
-#elif defined (_CFIB_SYSAPI_WINDOWS)
+#elif defined (_WITH_SYSAPI_WINDOWS)
     #error "TODO: WINAPI support."
 #endif
 
 cfib_t* cfib_init_thread()
 {
-#if _HAVE_C11_THREAD_LOCAL
+#if _WITH_C11_THREAD_LOCAL
     if(_cfib_current != NULL) {
         fprintf(stderr, "libcfib_C11: WARNING: cfib_init_thread() called more than once per thread!\n");
         return _cfib_current;
     }
     _cfib_current = calloc(1, sizeof(cfib_t));
     return _cfib_current;
-#elif defined(_CFIB_SYSAPI_POSIX)
+#elif defined(_WITH_SYSAPI_POSIX)
     pthread_once(&_cfib_init_tls_once, _cfib_init_tls);
     cfib_t** tls = (cfib_t**)pthread_getspecific(_cfib_tls_key);
     if(tls != NULL) {
@@ -172,7 +174,7 @@ cfib_t* cfib_init_thread()
     int ret = pthread_setspecific(_cfib_tls_key, tls);
     assert("libcfib: cfib_init_thread() ran out of memory for TLS object !!!" && ret == 0);
     return *tls;
-#elif defined(_CFIB_SYSAPI_WINDOWS)
+#elif defined(_WITH_SYSAPI_WINDOWS)
     #error "TODO: WINAPI support."
 #endif
 }
@@ -180,7 +182,7 @@ cfib_t* cfib_init_thread()
 cfib_t* cfib_init_thread__prof__()
 {
     cfib_t* ret = cfib_init_thread();
-#ifdef _HAVE_C11_ATOMICS
+#ifdef _WITH_C11_ATOMICS
     pthread_once(&_prof_init_once, _prof_init);
 #else
     fprintf(stderr, "libcfib: WARNING: profiling is disabled!\n");
@@ -193,7 +195,7 @@ cfib_t* cfib_new(void* start_routine, void* args, uint_fast32_t ssize)
     cfib_t* context = (cfib_t*)calloc(1, sizeof(cfib_t));
     if(context == NULL)
         return NULL;
-#ifdef _CFIB_SYSAPI_POSIX
+#ifdef _WITH_SYSAPI_POSIX
     if(ssize != 0)
         ssize = _align_size_to_page(ssize);
     else
@@ -230,7 +232,7 @@ cfib_t* cfib_new(void* start_routine, void* args, uint_fast32_t ssize)
     context->sp = context->stack_floor = context->stack_ceiling + ssize;
     _cfib_init_stack(&context->sp, start_routine, args);
     return context;
-#elif defined (_CFIB_SYSAPI_WINDOWS)
+#elif defined (_WITH_SYSAPI_WINDOWS)
     #error "TODO: WINAPI support."
 #endif
 _errexit:
@@ -240,7 +242,7 @@ _errexit:
 
 cfib_t* cfib_new__prof__(void* start_routine, void* args, uint_fast32_t ssize)
 {
-#ifdef _HAVE_C11_ATOMICS
+#ifdef _WITH_C11_ATOMICS
     cfib_t* context = (cfib_t*)calloc(1, sizeof(cfib_t));
     if(context == NULL)
         return NULL;
@@ -281,14 +283,14 @@ _errexit:
 }
 
 void cfib_unmap(cfib_t* context) {
-#ifdef _CFIB_SYSAPI_POSIX
+#ifdef _WITH_SYSAPI_POSIX
 #ifdef __FreeBSD__
     munmap(context->stack_ceiling, (size_t)(context->stack_floor - context->stack_ceiling));
 #else
     context->stack_ceiling -= _get_sys_page_size();
     munmap(context->stack_ceiling, (size_t)(context->stack_floor - context->stack_ceiling));
 #endif
-#elif _CFIB_SYSAPI_WINDOWS
+#elif _WITH_SYSAPI_WINDOWS
     #error "TODO: WINAPI support."
 #endif
     memset(context, 0, sizeof(cfib_t));
@@ -296,30 +298,30 @@ void cfib_unmap(cfib_t* context) {
 
 // @internal This function is called from assembler if a fiber returns.
 void _cfib_exit_thread() {
-#ifdef _CFIB_SYSAPI_POSIX
+#ifdef _WITH_SYSAPI_POSIX
     pthread_exit(NULL);
-#elif defined (_CFIB_SYSAPI_WINDOWS)
+#elif defined (_WITH_SYSAPI_WINDOWS)
     #error "TODO: WINAPI support."
 #endif
 }
 
-#ifndef _HAVE_C11_THREAD_LOCAL
+#ifndef _WITH_C11_THREAD_LOCAL
 
 cfib_t* cfib_get_current() {
-#ifdef _CFIB_SYSAPI_POSIX
+#ifdef _WITH_SYSAPI_POSIX
     cfib_t** tls = (cfib_t**)pthread_getspecific(_cfib_tls_key);
     assert("CALL cfib_init_thread() BEFORE CALLING cfib_get_current() !!!" && tls != NULL);
     return *tls;
-#elif defined (_CFIB_SYSAPI_WINDOWS)
+#elif defined (_WITH_SYSAPI_WINDOWS)
     #error "TODO: WINAPI support."
 #endif
 }
 
 cfib_t* cfib_get_current__noassert__() {
-#ifdef _CFIB_SYSAPI_POSIX
+#ifdef _WITH_SYSAPI_POSIX
     //fprintf(stderr, "cfib_get_current__noassert__()\n");
     return *((cfib_t**)pthread_getspecific(_cfib_tls_key));
-#elif defined (_CFIB_SYSAPI_WINDOWS)
+#elif defined (_WITH_SYSAPI_WINDOWS)
     #error "TODO: WINAPI support."
 #endif
 }
@@ -327,27 +329,27 @@ cfib_t* cfib_get_current__noassert__() {
 void _cfib_swap(unsigned char** sp1, unsigned char* sp2);
 
 void cfib_swap(cfib_t *to) {
-#ifdef _CFIB_SYSAPI_POSIX
+#ifdef _WITH_SYSAPI_POSIX
     cfib_t** tls = (cfib_t**)pthread_getspecific(_cfib_tls_key);
     assert("CALL cfib_init_thread() BEFORE CALLING cfib_swap() !!!" && tls != NULL);
     cfib_t* from = *tls;
     *tls = to;
     _cfib_swap(&from->sp, to->sp);
-#elif defined (_CFIB_SYSAPI_WINDOWS)
+#elif defined (_WITH_SYSAPI_WINDOWS)
     #error "TODO: WINAPI support."
 #endif
 }
 
 void cfib_swap__noassert__(cfib_t *to) {
-#ifdef _CFIB_SYSAPI_POSIX
+#ifdef _WITH_SYSAPI_POSIX
     //fprintf(stderr, "cfib_swap__noassert__()\n");
     cfib_t** tls = (cfib_t**)pthread_getspecific(_cfib_tls_key);
     cfib_t* from = *tls;
     *tls = to;
     _cfib_swap(&from->sp, to->sp);
-#elif defined (_CFIB_SYSAPI_WINDOWS)
+#elif defined (_WITH_SYSAPI_WINDOWS)
     #error "TODO: WINAPI support."
 #endif
 }
 
-#endif /* #ifndef _HAVE_C11_THREAD_LOCAL  */
+#endif /* #ifndef _WITH_C11_THREAD_LOCAL  */

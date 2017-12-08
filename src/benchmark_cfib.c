@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <sys/mman.h>
-#if _HAVE_C11_THREAD_LOCAL
+#if _WITH_C11_THREAD_LOCAL
 #include "cfib_C11.h"
 #else
 #include "cfib.h"

@@ -2,7 +2,7 @@ _bin = []
 _lib = []
 Import('*')
 env = root_env.Clone()
-env.Append(CPPDEFINES = '_CFIB_SYSAPI_' + config_system_API)
+env.Append(CPPDEFINES = '_WITH_SYSAPI_' + config_system_API)
 
 nasm_env = env.Clone();
 nasm_env.Append(BUILDERS = {'NASMObject' : Builder(action = 'nasm -f $NASM_FORMAT $NASM_FLAGS -o $TARGET $SOURCE')})
@@ -15,11 +15,11 @@ else:
 nasm_shared_obj = nasm_env.NASMObject('cfib' + nasm_suffix + '.os', 'cfib' + nasm_suffix + '.asm', NASM_FLAGS='-D _ELF_SHARED=1')
 nasm_static_obj = nasm_env.NASMObject('cfib' + nasm_suffix + '.o', 'cfib' + nasm_suffix + '.asm')
 if config_have_c11_atomics:
-    env.Append(CPPDEFINES = '_HAVE_C11_ATOMICS')
+    env.Append(CPPDEFINES = '_WITH_C11_ATOMICS')
 env.Append(LIBPATH = ['.'])
 variants = [('', '')]
 if config_have_c11_thread_local:
-    variants += [('-D_HAVE_C11_THREAD_LOCAL', '_C11')]
+    variants += [('-D_WITH_C11_THREAD_LOCAL', '_C11')]
 for variant_cflags, variant_suffix in variants:
     e = env.Clone()
     e.Append(CCFLAGS = [variant_cflags])
