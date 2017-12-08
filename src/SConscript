@@ -14,30 +14,38 @@ else:
     Exit(1)
 nasm_shared_obj = nasm_env.NASMObject('cfib' + nasm_suffix + '.os', 'cfib' + nasm_suffix + '.asm', NASM_FLAGS='-D _ELF_SHARED=1')
 nasm_static_obj = nasm_env.NASMObject('cfib' + nasm_suffix + '.o', 'cfib' + nasm_suffix + '.asm')
+if config_have_c11_thread_local:
+    env.Append(CPPDEFINES = '_WITH_C11_THREAD_LOCAL')
 if config_have_c11_atomics:
     env.Append(CPPDEFINES = '_WITH_C11_ATOMICS')
 env.Append(LIBPATH = ['.'])
-variants = [('', '')]
-if config_have_c11_thread_local:
-    variants += [('-D_WITH_C11_THREAD_LOCAL', '_C11')]
-for variant_cflags, variant_suffix in variants:
+
+lib_variants = [('', '')]
+if config_have_c11_atomics:
+    lib_variants += [('-D_PROFILED_BUILD', '_profiled')]
+    have_profiled_libs = True
+for cppdefs, suffix in lib_variants:
     e = env.Clone()
-    e.Append(CCFLAGS = [variant_cflags])
-    shared_objects = [e.SharedObject('cfib' + variant_suffix, 'cfib.c'), nasm_shared_obj]
-    static_objects = [e.StaticObject('cfib' + variant_suffix, 'cfib.c'), nasm_static_obj]
-    _lib += [e.SharedLibrary(target = 'cfib' + variant_suffix, source = shared_objects)]
-    _lib += [e.StaticLibrary(target = 'cfib' + variant_suffix + '_static', source = static_objects)]
-    e_shared = e.Clone()
-    e_static = e.Clone()
-    e_shared.Append(LIBS = ['cfib' + variant_suffix])
-    e_static.Append(LIBS = ['cfib' + variant_suffix + '_static'])
-    test_obj = e.Object('test_cfib' + variant_suffix, 'test_cfib.c')
-    bench_obj = e.Object('benchmark_cfib' + variant_suffix, 'benchmark_cfib.c')
-    prof_obj = e.Object('test_cfib_profiler' + variant_suffix, 'test_cfib_profiler.c')
-    _bin += [e_shared.Program(target = 'test_cfib' + variant_suffix, source = [test_obj])]
-    _bin += [e_static.Program(target = 'test_cfib' + variant_suffix + '_static', source = [test_obj])]
-    _bin += [e_static.Program(target = 'benchmark_cfib' + variant_suffix, source = [bench_obj])]
-    _bin += [e_static.Program(target = 'test_cfib_profiler' + variant_suffix, source = [prof_obj])]
+    e.Append(CPPDEFINES = [cppdefs])
+    shared_objects = [e.SharedObject('cfib' + suffix, 'cfib.c'), nasm_shared_obj]
+    static_objects = [e.StaticObject('cfib' + suffix, 'cfib.c'), nasm_static_obj]
+    _lib += [e.SharedLibrary(target = 'cfib' + suffix, source = shared_objects)]
+    _lib += [e.StaticLibrary(target = 'cfib' + suffix + '_static', source = static_objects)]
+
+test_variants = [('', ''), ('-D_TEST_C11_BUILD', '_c11')]
+for cppdefs, suffix in test_variants:
+    e_shared = env.Clone()
+    e_static = env.Clone()
+    e_profiled = env.Clone()
+    for e in (e_shared, e_static, e_profiled):
+        e.Append(CPPDEFINES = [cppdefs]);
+    e_shared.Append(LIBS = ['cfib'])
+    e_static.Append(LIBS = ['cfib_static'])
+    e_profiled.Append(LIBS = ['cfib_profiled'])
+    test_obj = e.Object('test_cfib' + suffix, 'test_cfib.c')
+    _bin += [e_shared.Program(target = 'test_cfib' + suffix, source = [test_obj])]
+    _bin += [e_static.Program(target = 'test_cfib' + suffix + '_static', source = [test_obj])]
+    _bin += [e_profiled.Program(target = 'test_cfib' + suffix + '_profiled', source = [test_obj])]
 
 _ret = {'test_bin': _bin, 'lib': _lib}
 Return('_ret')
