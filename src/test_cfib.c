@@ -78,7 +78,7 @@ void bench_swap(int n) {
     clock_gettime(CLOCK_THREAD_CPUTIME_ID, &tp0);
     tt = tp0.tv_nsec - tt;
     qsort(intervals, n, sizeof(long), _long_cmp);
-    printf("Benchmark cfib_swap():\n");
+    printf("Time across cfib_swap() call, sampled %d times:\n", n);
     printf("median\t%ld ns\n", _get_median(intervals, n) - clock_overhead);
     printf("   min\t%ld ns\n", intervals[0] - clock_overhead);
     printf("   max\t%ld ns\n", intervals[n - 1] - clock_overhead);
@@ -101,7 +101,7 @@ void bench_swap__noassert__(int n) {
     clock_gettime(CLOCK_THREAD_CPUTIME_ID, &tp0);
     tt = tp0.tv_nsec - tt;
     qsort(intervals, n, sizeof(long), _long_cmp);
-    printf("Benchmark cfib_swap__noassert__():\n");
+    printf("Time across cfib_swap__noassert__() call, sampled %d times:\n", n);
     printf("median\t%ld ns\n", _get_median(intervals, n) - clock_overhead);
     printf("   min\t%ld ns\n", intervals[0] - clock_overhead);
     printf("   max\t%ld ns\n", intervals[n - 1] - clock_overhead);
@@ -129,10 +129,10 @@ void adjust_clock_overhead(int n) {
 
 void print_usage(char *name) {
     fprintf(stderr, "Usage: %s <#>\n\n", name);
-    fprintf(stderr, "#\tTest\n");
-    fprintf(stderr, "1\tbenchmark cfib_swap()\n");
-    fprintf(stderr, "2\tbenchmark cfib_swap__noassert__()\n");
-    fprintf(stderr, "3\tstack hog (NOT IMPLEMENTED)\n");
+    fprintf(stderr, "#\tTest/benchmark\n");
+    fprintf(stderr, "1\tBenchmark: Time across cfib_swap()\n");
+    fprintf(stderr, "2\tBenchmark: Time across cfib_swap__noassert__()\n");
+    fprintf(stderr, "3\tTest: stack hog (NOT IMPLEMENTED)\n");
 }
 
 int main(int argc, char** argv) {
