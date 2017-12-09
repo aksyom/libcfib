@@ -11,20 +11,24 @@
 #include "cfib.h"
 #endif
 
-cfib_t *main_context;
+#define NUM_SAMPLES 100000
 
-#define NUM_SAMPLES 10000
+cfib_t *fib_main = 0;
+long clock_overhead = 0;
 
-cfib_t *fib_main;
-
-void test_pingpong(void *arg) {
+void func_pingpong(void *arg) {
     while(1)
         cfib_swap((cfib_t*)arg);
 }
 
-void test_pingpong__noassert__(void *arg) {
+void func_pingpong__noassert__(void *arg) {
     while(1)
         cfib_swap__noassert__((cfib_t*)arg);
+}
+
+void func_stack_hog(void *arg) {
+    fprintf(stderr, "TODO\n");
+    return;
 }
 
 void test_return(void *arg) {
@@ -61,7 +65,7 @@ long _get_median(long* b, size_t s) {
 
 void bench_swap(int n) {
     struct timespec tp0, tp1;
-    cfib_t* test_context = cfib_new((void*)test_pingpong, (void*)fib_main, 0);
+    cfib_t* test_context = cfib_new((void*)func_pingpong, (void*)fib_main, 0);
     long *intervals = mmap(0, sizeof(long) * n, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0);
     clock_gettime(CLOCK_THREAD_CPUTIME_ID, &tp0);
     long tt = tp0.tv_nsec;
@@ -74,16 +78,17 @@ void bench_swap(int n) {
     clock_gettime(CLOCK_THREAD_CPUTIME_ID, &tp0);
     tt = tp0.tv_nsec - tt;
     qsort(intervals, n, sizeof(long), _long_cmp);
-    printf("median\t%ld ns\n", _get_median(intervals, n));
-    printf("   min\t%ld ns\n", intervals[0]);
-    printf("   max\t%ld ns\n", intervals[n - 1]);
-    printf(" total\t%ld ns\n", tt);
+    printf("Benchmark cfib_swap():\n");
+    printf("median\t%ld ns\n", _get_median(intervals, n) - clock_overhead);
+    printf("   min\t%ld ns\n", intervals[0] - clock_overhead);
+    printf("   max\t%ld ns\n", intervals[n - 1] - clock_overhead);
+    printf(" total\t%ld ns\n", tt - clock_overhead);
     munmap(intervals, sizeof(long) * n);
 }
 
 void bench_swap__noassert__(int n) {
     struct timespec tp0, tp1;
-    cfib_t* test_context = cfib_new((void*)test_pingpong__noassert__, (void*)fib_main, 0);
+    cfib_t* test_context = cfib_new((void*)func_pingpong__noassert__, (void*)fib_main, 0);
     long *intervals = mmap(0, sizeof(long) * n, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0);
     clock_gettime(CLOCK_THREAD_CPUTIME_ID, &tp0);
     long tt = tp0.tv_nsec;
@@ -96,18 +101,37 @@ void bench_swap__noassert__(int n) {
     clock_gettime(CLOCK_THREAD_CPUTIME_ID, &tp0);
     tt = tp0.tv_nsec - tt;
     qsort(intervals, n, sizeof(long), _long_cmp);
-    printf("median\t%ld ns\n", _get_median(intervals, n));
-    printf("   min\t%ld ns\n", intervals[0]);
-    printf("   max\t%ld ns\n", intervals[n - 1]);
-    printf(" total\t%ld ns\n", tt);
+    printf("Benchmark cfib_swap__noassert__():\n");
+    printf("median\t%ld ns\n", _get_median(intervals, n) - clock_overhead);
+    printf("   min\t%ld ns\n", intervals[0] - clock_overhead);
+    printf("   max\t%ld ns\n", intervals[n - 1] - clock_overhead);
+    printf(" total\t%ld ns\n", tt - clock_overhead);
+    munmap(intervals, sizeof(long) * n);
+}
+
+void test_stack_hog() {
+    cfib_t* test_context = cfib_new((void*)func_stack_hog, NULL, 0);
+    cfib_swap(test_context);
+}
+
+void adjust_clock_overhead(int n) {
+    long *intervals = mmap(0, sizeof(long) * n, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0);
+    struct timespec tp0, tp1;
+    for(int i = 0; i < n; i++) {
+        clock_gettime(CLOCK_MONOTONIC, &tp0);
+        clock_gettime(CLOCK_MONOTONIC, &tp1);
+        intervals[i] = tp1.tv_nsec - tp0.tv_nsec;
+    }
+    qsort(intervals, n, sizeof(long), _long_cmp);
+    clock_overhead = _get_median(intervals, n);
     munmap(intervals, sizeof(long) * n);
 }
 
 void print_usage(char *name) {
     fprintf(stderr, "Usage: %s <#>\n\n", name);
     fprintf(stderr, "#\tTest\n");
-    fprintf(stderr, "1\tbenchmark\n");
-    fprintf(stderr, "2\tbenchmark (noassert)\n");
+    fprintf(stderr, "1\tbenchmark cfib_swap()\n");
+    fprintf(stderr, "2\tbenchmark cfib_swap__noassert__()\n");
     fprintf(stderr, "3\tstack hog (NOT IMPLEMENTED)\n");
 }
 
@@ -116,8 +140,8 @@ int main(int argc, char** argv) {
         goto errexit;
     unsigned long test_num = strtoul(argv[1], NULL, 10);
     fib_main = cfib_init_thread();
-    cfib_t* fib = NULL;
-    long *intervals = NULL;
+    adjust_clock_overhead(NUM_SAMPLES);
+    printf("Benchmarks adjusted with clock overhead (median): -%ld\n\n", clock_overhead);
     switch(test_num) {
         case 1:
             bench_swap(NUM_SAMPLES);
@@ -126,7 +150,7 @@ int main(int argc, char** argv) {
             bench_swap__noassert__(NUM_SAMPLES);
             break;
         case 3:
-            fprintf(stderr, "TODO\n");
+            test_stack_hog();
             break;
         default:
             goto errexit;

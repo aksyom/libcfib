@@ -19,7 +19,7 @@ inline static cfib_t* cfib_get_current() {
     return _cfib_current;
 }
 #else
-#define cfib_get_current() cfib_get_current__noassert__()
+#define cfib_get_current cfib_get_current__noassert__
 #endif
 
 /** @internal
@@ -47,7 +47,7 @@ inline static void cfib_swap(cfib_t* to) {
     _cfib_swap(&from->sp, to->sp);
 }
 #else
-#define cfib_swap(to) cfib_swap__noassert__(to)
+#define cfib_swap cfib_swap__noassert__
 #endif
 
 #ifdef __cplusplus
