@@ -4,13 +4,15 @@
 #include <stdio.h>
 #include <string.h>
 
-#ifdef _WITH_SYSAPI_POSIX
-
+#ifdef _PROFILED_BUILD
 #ifdef _WITH_C11_ATOMICS
 #include <stdatomic.h>
 #else
-#warning "Compiler does not support C11 _Atomic, profiling is disabled!"
+#error "Compiler does not support C11 _Atomic, cannot compile profiling variant of library!"
 #endif
+#endif /* #ifdef _PROFILED_BUILD  */
+
+#ifdef _WITH_SYSAPI_POSIX
 
 #include <unistd.h>
 #include <sys/mman.h>
@@ -50,32 +52,14 @@ static inline uint_fast32_t _align_size_to_page(uint_fast32_t size)
 }
 
 #ifdef _PROFILED_BUILD
+
 static void*  _prof_map = NULL;
 static size_t _prof_nfaults = 0;
 
-#ifdef _WITH_C11_ATOMICS
 static atomic_flag _prof_map_lock = ATOMIC_FLAG_INIT;
 
 #define _atomic_test_and_set(flag) atomic_flag_test_and_set_explicit(flag, memory_order_relaxed)
 #define _atomic_clear(flag) atomic_flag_clear_explicit(flag, memory_order_release)
-#elif defined (_WITH_SYSAPI_WINDOWS) /* #ifdef _WITH_C11_ATOMICS */
-typedef atomic_flag LONG;
-
-static LONG _prof_map_lock = 0;
-
-#define _atomic_test_and_set(flag) InterlockedExchange(flag, 1)
-#define _atomic_clear(flag) InterlockedExchange(flag, 0)
-#else /* #ifdef _WITH_C11_ATOMICS */
-void* _prof_map_lock = NULL;
-
-inline static int _atomic_test_and_set(void *flag) {
-    assert("_atomic_test_and_set() unimplemented!" && 0);
-}
-
-inline static int _atomic_clear(void *flag) {
-    assert("_atomic_clear() unimplemented!" && 0);
-}
-#endif /* #ifdef _WITH_C11_ATOMICS */
 
 #ifdef _WITH_SYSAPI_POSIX
 static pthread_once_t _prof_init_once = PTHREAD_ONCE_INIT;
@@ -121,9 +105,9 @@ next:
         _prof_oact.sa_handler(sig);
 }
 
-static void _prof_init() {
-    _prof_map = mmap(0, 1<<16, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0);
-    assert("Profiling was enabled, but profiler map allocation failed!" &&  _prof_map != MAP_FAILED);
+static void _prof_init_thread() {
+    static _Thread_local int called_before = 0;
+    assert(!called_before);
     size_t sigstk_size = MINSIGSTKSZ + 16 * _get_sys_page_size();
     void *sigstk_mem = mmap(0, sigstk_size, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0);
     stack_t sigstk = {
@@ -132,7 +116,15 @@ static void _prof_init() {
         .ss_flags = 0
     };
     assert( sigaltstack(&sigstk, NULL) == 0 );
+    called_before = 1;
+}
+
+static void _prof_init() {
+    _prof_map = mmap(0, 1<<16, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0);
+    assert("Profiling was enabled, but profiler map allocation failed!" &&  _prof_map != MAP_FAILED);
     sigset_t sigmask;
+    sigemptyset(&sigmask);
+    sigaddset(&sigmask, SIGURG);
     sigaddset(&sigmask, SIGTSTP);
     sigaddset(&sigmask, SIGCONT);
     sigaddset(&sigmask, SIGCHLD);
@@ -155,54 +147,24 @@ static void _prof_init() {
 
 #endif /* #ifdef _PROFILED_BUILD */
 
-#ifdef _WITH_C11_THREAD_LOCAL
 _Thread_local cfib_t* _cfib_current = NULL;
-#elif defined (_WITH_SYSAPI_POSIX)
-pthread_key_t _cfib_tls_key;
-
-static pthread_once_t _cfib_init_tls_once = PTHREAD_ONCE_INIT;
-
-static void _cfib_init_tls() {
-    int ret = pthread_key_create(&_cfib_tls_key, NULL);
-    assert("libcfib: pthread_key_create() failed to init TLS key !!!" && ret == 0);
-}
-#elif defined (_WITH_SYSAPI_WINDOWS)
-    #error "TODO: WINAPI TSL support."
-#endif
 
 cfib_t* cfib_init_thread()
 {
-    cfib_t* ret = NULL;
-#if _WITH_C11_THREAD_LOCAL
-    if(_cfib_current != NULL) {
+    static _Thread_local int called_before = 0;
+    if(called_before) {
         fprintf(stderr, "libcfib_C11: WARNING: cfib_init_thread() called more than once per thread!\n");
         return _cfib_current;
     }
-    _cfib_current = calloc(1, sizeof(cfib_t));
-    ret = _cfib_current;
-#elif defined(_WITH_SYSAPI_POSIX)
-    pthread_once(&_cfib_init_tls_once, _cfib_init_tls);
-    cfib_t** tls = (cfib_t**)pthread_getspecific(_cfib_tls_key);
-    if(tls != NULL) {
-        fprintf(stderr, "libcfib: WARNING: cfib_init_thread() called more than once per thread!\n");
-        return *tls;
-    }
-    tls = malloc(sizeof(cfib_t**));
-    assert("libcfib: cfib_init_thread() ran out of memory for TLS object !!!" && tls != NULL);
-    *tls = calloc(1, sizeof(cfib_t));
-    assert("libcfib: cfib_init_thread() ran out of memory for TLS object !!!" && *tls != NULL);
-    int res = pthread_setspecific(_cfib_tls_key, tls);
-    assert("libcfib: cfib_init_thread() ran out of memory for TLS object !!!" && res == 0);
-    ret = *tls;
-#elif defined (_WITH_SYSAPI_WINDOWS)
-    #error "TODO: WINAPI TLS support."
-#endif
 #if defined(_PROFILED_BUILD) && defined (_WITH_SYSAPI_POSIX)
+    _prof_init_thread();
     pthread_once(&_prof_init_once, _prof_init);
 #elif defined(_PROFILED_BUILD) && defined (_WITH_SYSAPI_WINDOWS)
     #error "TODO: WINAPI profiling support."
 #endif
-    return ret;
+    _cfib_current = calloc(1, sizeof(cfib_t));
+    called_before = 1;
+    return _cfib_current;
 }
 
 cfib_t* cfib_new(void* start_routine, void* args, uint_fast32_t ssize)
@@ -259,7 +221,6 @@ cfib_t* cfib_new(void* start_routine, void* args, uint_fast32_t ssize)
 #else
     void *m = mmap(0, ssize + page_size, PROT_READ|PROT_WRITE, mmap_flags, -1, 0);
 #endif
-    //assert("libcfib: cfib_init() failed to mmap() stack !!!" && m != MAP_FAILED);
     if(m == MAP_FAILED) {
         fprintf(stderr, "libcfib: WARNING: cfib_new() failed to allocate stack!\n");
         goto _errexit;
@@ -305,62 +266,3 @@ void _cfib_exit_thread() {
     #error "TODO: WINAPI support."
 #endif
 }
-
-
-cfib_t* cfib_get_current() {
-#ifdef _WITH_C11_THREAD_LOCAL
-    assert("CALL cfib_init_thread() BEFORE CALLING cfib_get_current() !!!" && _cfib_current != NULL);
-    return _cfib_current;
-#elif defined (_WITH_SYSAPI_POSIX)
-    cfib_t** tls = (cfib_t**)pthread_getspecific(_cfib_tls_key);
-    assert("CALL cfib_init_thread() BEFORE CALLING cfib_get_current() !!!" && tls != NULL);
-    return *tls;
-#elif defined (_WITH_SYSAPI_WINDOWS)
-    #error "TODO: WINAPI support."
-#endif
-}
-
-cfib_t* cfib_get_current__noassert__() {
-#ifdef _WITH_C11_THREAD_LOCAL
-    return _cfib_current;
-#elif defined (_WITH_SYSAPI_POSIX)
-    return *((cfib_t**)pthread_getspecific(_cfib_tls_key));
-#elif defined (_WITH_SYSAPI_WINDOWS)
-    #error "TODO: WINAPI support."
-#endif
-}
-
-void _cfib_swap(unsigned char** sp1, unsigned char* sp2);
-
-void cfib_swap(cfib_t *to) {
-#ifdef _WITH_C11_THREAD_LOCAL
-    assert("CALL cfib_init_thread() BEFORE CALLING cfib_swap() !!!" && _cfib_current != NULL);
-    cfib_t* from = _cfib_current;
-    _cfib_current = to;
-    _cfib_swap(&from->sp, to->sp);
-#elif defined (_WITH_SYSAPI_POSIX)
-    cfib_t** tls = (cfib_t**)pthread_getspecific(_cfib_tls_key);
-    assert("CALL cfib_init_thread() BEFORE CALLING cfib_swap() !!!" && tls != NULL);
-    cfib_t* from = *tls;
-    *tls = to;
-    _cfib_swap(&from->sp, to->sp);
-#elif defined (_WITH_SYSAPI_WINDOWS)
-    #error "TODO: WINAPI support."
-#endif
-}
-
-void cfib_swap__noassert__(cfib_t *to) {
-#ifdef _WITH_C11_THREAD_LOCAL
-    cfib_t* from = _cfib_current;
-    _cfib_current = to;
-    _cfib_swap(&from->sp, to->sp);
-#elif defined (_WITH_SYSAPI_POSIX)
-    cfib_t** tls = (cfib_t**)pthread_getspecific(_cfib_tls_key);
-    cfib_t* from = *tls;
-    *tls = to;
-    _cfib_swap(&from->sp, to->sp);
-#elif defined (_WITH_SYSAPI_WINDOWS)
-    #error "TODO: WINAPI support."
-#endif
-}
-

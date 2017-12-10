@@ -1,3 +1,5 @@
+import os
+
 # Build variables
 vars = Variables(None, ARGUMENTS)
 vars.Add(PathVariable('prefix', 'Common install prefix', '/usr/local'))
@@ -5,8 +7,10 @@ vars.Add(PathVariable('includedir', "Header files' install dir", '${prefix}/incl
 vars.Add(PathVariable('libdir', "Library files' install dir", '${prefix}/lib'))
 
 # Root environment, cloned by SConscripts
+#root_env = Environment(variables = vars, tools = ['default', 'nasm'])
 root_env = Environment(variables = vars)
-root_env['STATIC_AND_SHARED_OBJECTS_ARE_THE_SAME'] = True
+root_env['ENV']['TERM'] = os.environ['TERM']
+#root_env['STATIC_AND_SHARED_OBJECTS_ARE_THE_SAME'] = True
 root_env.Append(CCFLAGS = ['-g'])
 
 # Generate help text for cli options
@@ -36,6 +40,16 @@ libcfib_tests = {
 
 #if not env.GetOption('clean'):
 cnf = Configure(root_env, custom_tests = libcfib_tests)
+if not cnf.CheckC11ThreadLocal():
+    print "A compiler that supports C11 _Thread_local is required to build!"
+    Exit(1)
+else:
+    # This config flag is not used anywhere yet, but defined regardless
+    config_have_c11_thread_local = True
+
+if cnf.CheckC11Atomics():
+    config_have_c11_atomics = True
+
 if cnf.CheckHeader('unistd.h'):
     #cnf.env.Append(CPPDEFINES = '_CFIB_SYSAPI_POSIX')
     config_system_API = "POSIX"
@@ -52,14 +66,11 @@ elif cnf.CheckHeader('windows.h'):
 else:
     print "Unsupported platform."
     Exit(1)
-if cnf.CheckC11ThreadLocal():
-    config_have_c11_thread_local = True
-if cnf.CheckC11Atomics():
-    config_have_c11_atomics = True
+
 root_env = cnf.Finish()
 #print env['CPPDEFINES']
 
-Export('root_env', 'config_system_API', 'config_system_ABI', 'config_have_c11_thread_local', 'config_have_c11_atomics')
+Export('root_env', 'config_system_API', 'config_system_ABI', 'config_have_c11_atomics')
 built_files = SConscript('src/SConscript', variant_dir='build', duplicate=0)
 
 # Install target

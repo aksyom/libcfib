@@ -1,51 +1,55 @@
 _bin = []
 _lib = []
 Import('*')
-env = root_env.Clone()
+env = root_env.Clone(tools = ['default', 'nasm'])
 env.Append(CPPDEFINES = '_WITH_SYSAPI_' + config_system_API)
 
-nasm_env = env.Clone();
-nasm_env.Append(BUILDERS = {'NASMObject' : Builder(action = 'nasm -f $NASM_FORMAT $NASM_FLAGS -o $TARGET $SOURCE')})
+#nasm_env = env.Clone();
+#nasm_env.Append(BUILDERS = {'NASMObject' : Builder(action = 'nasm -f $NASM_FORMAT $NASM_FLAGS -o $TARGET $SOURCE')})
 if config_system_ABI == 'sysv-amd64':
     nasm_suffix = '-sysv-amd64'
-    nasm_env['NASM_FORMAT'] = 'elf64'
+    nasm_static_flags = '-f elf64'
+    nasm_shared_flags = '-f elf64 -D _ELF_SHARED=1'
 else:
     print "ERROR: Unsupported System ABI: " + config_system_ABI
     Exit(1)
-nasm_shared_obj = nasm_env.NASMObject('cfib' + nasm_suffix + '.os', 'cfib' + nasm_suffix + '.asm', NASM_FLAGS='-D _ELF_SHARED=1')
-nasm_static_obj = nasm_env.NASMObject('cfib' + nasm_suffix + '.o', 'cfib' + nasm_suffix + '.asm')
-if config_have_c11_thread_local:
-    env.Append(CPPDEFINES = '_WITH_C11_THREAD_LOCAL')
+nasm_static = env.Clone();
+nasm_shared = env.Clone();
+nasm_static.Append(ASFLAGS = nasm_static_flags)
+nasm_shared.Append(ASFLAGS = nasm_shared_flags)
+nasm_shared_obj = nasm_shared.SharedObject('cfib' + nasm_suffix + '.asm')
+nasm_static_obj = nasm_static.StaticObject('cfib' + nasm_suffix + '.asm')
+
 if config_have_c11_atomics:
     env.Append(CPPDEFINES = '_WITH_C11_ATOMICS')
-env.Append(LIBPATH = ['.'])
 
+env.Append(LIBPATH = ['.'])
 lib_variants = [('', '')]
+
 if config_have_c11_atomics:
     lib_variants += [('-D_PROFILED_BUILD', '_profiled')]
     have_profiled_libs = True
-for cppdefs, suffix in lib_variants:
-    e = env.Clone()
-    e.Append(CPPDEFINES = [cppdefs])
-    shared_objects = [e.SharedObject('cfib' + suffix, 'cfib.c'), nasm_shared_obj]
-    static_objects = [e.StaticObject('cfib' + suffix, 'cfib.c'), nasm_static_obj]
-    _lib += [e.SharedLibrary(target = 'cfib' + suffix, source = shared_objects)]
-    _lib += [e.StaticLibrary(target = 'cfib' + suffix + '_static', source = static_objects)]
+else:
+    print "Compiler does not support C11 _Atomic, skipping profiler build."
 
-test_variants = [('', ''), ('-D_TEST_C11_BUILD', '_c11')]
-for cppdefs, suffix in test_variants:
-    e_shared = env.Clone()
-    e_static = env.Clone()
-    e_profiled = env.Clone()
-    for e in (e_shared, e_static, e_profiled):
-        e.Append(CPPDEFINES = [cppdefs]);
-    e_shared.Append(LIBS = ['cfib'])
-    e_static.Append(LIBS = ['cfib_static'])
-    e_profiled.Append(LIBS = ['cfib_profiled'])
-    test_obj = e.Object('test_cfib' + suffix, 'test_cfib.c')
-    _bin += [e_shared.Program(target = 'test_cfib' + suffix, source = [test_obj])]
-    _bin += [e_static.Program(target = 'test_cfib' + suffix + '_static', source = [test_obj])]
-    _bin += [e_profiled.Program(target = 'test_cfib' + suffix + '_profiled', source = [test_obj])]
+for cppdefs, suffix in lib_variants:
+    var_env = env.Clone()
+    var_env.Append(CPPDEFINES = [cppdefs])
+    shared_objects = [var_env.SharedObject('cfib' + suffix, 'cfib.c'), nasm_shared_obj]
+    static_objects = [var_env.StaticObject('cfib' + suffix, 'cfib.c'), nasm_static_obj]
+    _lib += [var_env.SharedLibrary(target = 'cfib' + suffix, source = shared_objects)]
+    _lib += [var_env.StaticLibrary(target = 'cfib' + suffix + '_static', source = static_objects)]
+
+shared = env.Clone()
+static = env.Clone()
+profiled = env.Clone()
+shared.Append(LIBS = ['cfib'])
+static.Append(LIBS = ['cfib_static'])
+profiled.Append(LIBS = ['cfib_profiled'])
+test_obj = env.Object('test_cfib' + suffix, 'test_cfib.c')
+_bin += [shared.Program(target = 'test_cfib', source = [test_obj])]
+_bin += [static.Program(target = 'test_cfib_static', source = [test_obj])]
+_bin += [profiled.Program(target = 'test_cfib_profiled', source = [test_obj])]
 
 _ret = {'test_bin': _bin, 'lib': _lib}
 Return('_ret')

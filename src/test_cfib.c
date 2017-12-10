@@ -5,11 +5,7 @@
 #include <time.h>
 #include <sys/mman.h>
 
-#if _TEST_C11_BUILD
-#include "cfib_C11.h"
-#else
 #include "cfib.h"
-#endif
 
 #define NUM_SAMPLES 100000
 

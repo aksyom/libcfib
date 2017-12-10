@@ -59,20 +59,12 @@ _cfib_init_stack:
     ; When the rbp points to a memory location with zero pointer value, it will
     ; prevent gdb from going apeshit during stack frame unwinding.
     mov [rcx + 40], rax
-    ; Next we must set the return vector to _cfib_call into [rcx + 48], and
-    ; this is done differently whether we are dynamically linked and relocated
-    ; or statically linked
-    %ifdef _ELF_SHARED
-    ; We are relocated, so we cannot know beforehand what is the abs address
-    ; of our initial call vector ... but NASM allows us to get that abs address
-    ; by loading the address from symbol into register
+    ; Next we must set the return vector to _cfib_call into [rcx + 48]. The
+    ; return vector must be an absolute address in x86, so we will calculate
+    ; the absolute address with LEA using rip-relative base address. 
+    ; This code works even this compile unit was relocated.
     lea r8, [rel _cfib_call]
     mov [rcx + 48], r8
-    %else
-    ; We are statically linked, and thus we can move the address of _cfib_call
-    ; directly to the stack, it will be an absolute address
-    mov qword [rcx + 48], _cfib_call
-    %endif
     ; Set rax to zero, consequently our return value becomes 0, although
     ; the C function prototype won't declare a return type :P
     xor rax, rax
