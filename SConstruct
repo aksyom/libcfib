@@ -12,6 +12,7 @@ root_env = Environment(variables = vars)
 root_env['ENV']['TERM'] = os.environ['TERM']
 #root_env['STATIC_AND_SHARED_OBJECTS_ARE_THE_SAME'] = True
 root_env.Append(CCFLAGS = ['-g'])
+root_env.Append(LINKFLAGS = ['-g'])
 
 # Generate help text for cli options
 Help(vars.GenerateHelpText(root_env))

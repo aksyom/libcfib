@@ -8,8 +8,8 @@ env.Append(CPPDEFINES = '_WITH_SYSAPI_' + config_system_API)
 #nasm_env.Append(BUILDERS = {'NASMObject' : Builder(action = 'nasm -f $NASM_FORMAT $NASM_FLAGS -o $TARGET $SOURCE')})
 if config_system_ABI == 'sysv-amd64':
     nasm_suffix = '-sysv-amd64'
-    nasm_static_flags = '-f elf64'
-    nasm_shared_flags = '-f elf64 -D _ELF_SHARED=1'
+    nasm_static_flags = '-g -f elf64'
+    nasm_shared_flags = '-g -f elf64 -D _ELF_SHARED=1'
 else:
     print "ERROR: Unsupported System ABI: " + config_system_ABI
     Exit(1)

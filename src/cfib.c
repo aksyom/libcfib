@@ -5,11 +5,13 @@
 #include <string.h>
 
 #ifdef _PROFILED_BUILD
+
 #ifdef _WITH_C11_ATOMICS
 #include <stdatomic.h>
 #else
 #error "Compiler does not support C11 _Atomic, cannot compile profiling variant of library!"
 #endif
+
 #endif /* #ifdef _PROFILED_BUILD  */
 
 #ifdef _WITH_SYSAPI_POSIX
@@ -27,6 +29,8 @@
     #error "TODO: WINAPI support."
 #endif
 
+_Thread_local cfib_t* _cfib_current = NULL;
+_Thread_local cfib_t* _cfib_previous = NULL;
 
 // @internal Implemented in assembler module
 void _cfib_init_stack(unsigned char** sp, void* start_addr, void* args);
@@ -52,11 +56,18 @@ static inline uint_fast32_t _align_size_to_page(uint_fast32_t size)
 }
 
 #ifdef _PROFILED_BUILD
+typedef struct {
+    const char* _name;
+    uintptr_t _magic;
+    uint32_t num_faults;
+    uint32_t max_stack_size;
+    atomic_bool _sync;
+} cfib_tag_t;
 
-static void*  _prof_map = NULL;
-static size_t _prof_nfaults = 0;
+static cfib_tag_t _default_tag = {._name = "__DEFAULT__"};
 
-static atomic_flag _prof_map_lock = ATOMIC_FLAG_INIT;
+//#define _PROF_STKSZ (1<<20)
+//#define _PROF_STKEXP 20
 
 #define _atomic_test_and_set(flag) atomic_flag_test_and_set_explicit(flag, memory_order_relaxed)
 #define _atomic_clear(flag) atomic_flag_clear_explicit(flag, memory_order_release)
@@ -67,37 +78,47 @@ static pthread_once_t _prof_init_once = PTHREAD_ONCE_INIT;
 static struct sigaction _prof_oact;
 
 void _prof_segv_handler(int sig, siginfo_t *nfo, void *uap) {
-    if(sig != SIGSEGV)
-        goto next;
     if(nfo->si_addr == NULL)
         goto next;
-    int page_size = _get_sys_page_size();
-    void *stk_addr = nfo->si_addr - ((uintptr_t)nfo->si_addr % (1<<20));
+    if(_cfib_current == NULL)
+        goto next;
+    cfib_t* faulting_fib = NULL;
+    cfib_t* fibs[] ={_cfib_current, _cfib_previous};
+    for(int i = 0; i < 2; i++) {
+        if( nfo->si_addr >= (void*)fibs[i]->stack_ceiling
+            && nfo->si_addr < (void*)fibs[i]->stack_floor )
+        {
+            faulting_fib = fibs[i];
+            break;
+        }
+    }
+    if(faulting_fib == NULL)
+        goto next;
+    void *stack_ceiling = faulting_fib->stack_ceiling;
+    void *stack_floor = faulting_fib->stack_floor;
+    unsigned page_size = _get_sys_page_size();
     void *page_addr = nfo->si_addr - ((uintptr_t)nfo->si_addr % page_size);
-    uintptr_t i0 = ((uintptr_t)stk_addr>>12) & 0xffff;
-    uintptr_t i1 = ((uintptr_t)stk_addr>>(12 + 16)) & 0xffff;
-    fprintf(stderr, "_prof_segv_handler(): stk_addr = %p, page_addr= %p\n", stk_addr, page_addr);
-    fprintf(stderr, "_prof_segv_handler(): i0 = %lu, i1 = %lu\n", i0, i1);
-    //while(atomic_flag_test_and_set_explicit(&_prof_map_lock, memory_order_relaxed));
-    void** map0 = (void**)_prof_map;
-    fprintf(stderr, "_prof_segv_handler(): map0[%lu] = %p\n", i0, map0[i0]);
-    if(map0[i0] == NULL)
-        goto next;
-    void* prof_data = ((void**)(map0[i0]))[i1];
-    fprintf(stderr, "_prof_segv_handler(): prof_data = %p\n", prof_data);
-    if(prof_data == NULL)
-        goto next;
-    if(page_addr == stk_addr) {
-        fprintf(stderr, "libcfib: Stack break @ %p\n", page_addr);
+    if(page_addr == stack_ceiling) {
+        fprintf(stderr, "libcfib: Stack break @ %p\n", nfo->si_addr);
         goto next;
     }
-    //atomic_flag_clear_explicit(&_prof_map_lock, memory_order_release);
     int res = mprotect(page_addr, page_size, PROT_READ|PROT_WRITE);
     assert("Profiling SIGSEGV handler failed to remove guard page from stack!" && res == 0);
-    _prof_nfaults++;
+    fprintf(stderr, "libcfib: SEGV @ addr = %p, page = [%p:%p), stack = [%p:%p)", nfo->si_addr, page_addr, page_addr + page_size, stack_ceiling, stack_floor);
+    assert(faulting_fib->_private != NULL);
+    cfib_tag_t* tag = (cfib_tag_t*)faulting_fib->_private;
+    fprintf(stderr, ", group = %s", tag->_name);
+    unsigned stack_diff = (unsigned)((uintptr_t)stack_floor - (uintptr_t)page_addr);
+    while( atomic_exchange_explicit(&tag->_sync, 1, memory_order_acquire) );
+    tag->num_faults++;
+    if(tag->max_stack_size < stack_diff)
+        tag->max_stack_size = stack_diff;
+    atomic_store_explicit(&tag->_sync, 0, memory_order_release);
+ok_exit:
+    fputs("\n", stderr);
     return;
 //next_clear:
-//    atomic_flag_clear_explicit(&_prof_map_lock, memory_order_release);
+//    atomic_flag_clear_explicit(&_prof_tbl_lock, memory_order_release);
 next:
     if(_prof_oact.sa_flags & SA_SIGINFO)
         _prof_oact.sa_sigaction(sig, nfo, uap);
@@ -120,8 +141,6 @@ static void _prof_init_thread() {
 }
 
 static void _prof_init() {
-    _prof_map = mmap(0, 1<<16, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0);
-    assert("Profiling was enabled, but profiler map allocation failed!" &&  _prof_map != MAP_FAILED);
     sigset_t sigmask;
     sigemptyset(&sigmask);
     sigaddset(&sigmask, SIGURG);
@@ -139,15 +158,15 @@ static void _prof_init() {
         .sa_mask = sigmask
     };
     assert( sigaction(SIGSEGV, &act, &_prof_oact) == 0 );
-    fprintf(stderr, "libcfib: Fiber stack profiler enabled.\n");
+    fprintf(stderr, "libcfib: Fiber profiler enabled.\n");
 }
+
+
 #elif defined(_WITH_SYSAPI_WINDOWS) /* #ifdef _WITH_SYSAPI_POSIX */
     #error "TODO: WINAPI support."
 #endif /* #ifdef _WITH_SYSAPI_POSIX  */
 
 #endif /* #ifdef _PROFILED_BUILD */
-
-_Thread_local cfib_t* _cfib_current = NULL;
 
 cfib_t* cfib_init_thread()
 {
@@ -163,66 +182,63 @@ cfib_t* cfib_init_thread()
     #error "TODO: WINAPI profiling support."
 #endif
     _cfib_current = calloc(1, sizeof(cfib_t));
+    _cfib_current->_magic = (uintptr_t)_cfib_current ^ _CFIB_MGK1;
     called_before = 1;
     return _cfib_current;
 }
 
-cfib_t* cfib_new(void* start_routine, void* args, uint_fast32_t ssize)
+cfib_t* cfib_new(void* start_routine, void* args, const cfib_attr_t* attr)
 {
     cfib_t* ret = (cfib_t*)calloc(1, sizeof(cfib_t));
     if(ret == NULL)
         return NULL;
+    cfib_attr_t _attr;
+    unsigned page_size = _get_sys_page_size();
+    if(attr == NULL) {
+        _attr = (cfib_attr_t){
+            .stack_size = 1<<16,
+            .flags = 0x0,
+            .tag = NULL
+        };
+    } else {
+        _attr.stack_size = _align_size_to_page(attr->stack_size);
+        if(_attr.stack_size < (2 * page_size))
+            _attr.stack_size = 2 * page_size;
+        _attr.flags = attr->flags;
+        _attr.tag = attr->tag;
+    }
+    attr = &_attr;
 #ifdef _PROFILED_BUILD
-
     void *stack_ceiling = NULL;
-    void* vres = NULL;
-    int res = posix_memalign(&stack_ceiling, 1<<20, 1<<20);
+    int res = posix_memalign(&stack_ceiling, page_size, attr->stack_size);
     if(res != 0) {
-        fprintf(stderr, "libcfib: cfib_init__prof__() failed to allocate profiled stack !!!");
+        fprintf(stderr, "libcfib: cfib_new() failed to allocate profiled stack !!!");
         goto _errexit;
     }
-    res = mprotect(stack_ceiling, (1<<20) - _get_sys_page_size(), PROT_NONE);
-    assert("libcfib: cfib_init__prof__() failed to apply guard on profiled stack !!!" && res == 0);
+    res = mprotect(stack_ceiling, attr->stack_size - _get_sys_page_size(), PROT_NONE);
+    assert("libcfib: cfib_new() failed to apply guard on profiled stack !!!" && res == 0);
     ret->stack_ceiling = (unsigned char*)stack_ceiling;
-    ret->sp = ret->stack_floor = ret->stack_ceiling + (1<<20);
-    _cfib_init_stack(&ret->sp, start_routine, args);
-    while( _atomic_test_and_set(&_prof_map_lock) )
-        ; /* Spin until lock is acquired */
-    uintptr_t i0 = ((uintptr_t)stack_ceiling>>12) & 0xffff;
-    uintptr_t i1 = ((uintptr_t)stack_ceiling>>(12 + 16)) & 0xffff;
-    void** map0 = (void**)_prof_map;
-    if( map0[i0] == NULL ) {
-        vres = map0[i0] = mmap(0, 1<<16, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0);
-        assert("libcfib: cfib_init__prof__() failed to assert profiler stack map !!!" && vres != MAP_FAILED);
-    }
-    void** map1 = (void**)(map0[i0]);
-    map1[i1] = stack_ceiling;
-    _atomic_clear(&_prof_map_lock);
-    fprintf(stderr, "__prof__: i0 = %lu, i1 = %lu, map0[%lu] = %p, map1[%lu] = %p\n", i0, i1, i0, map0[i0], i1, map1[i1]);
-    fprintf(stderr, "libcfib: New profiled stack @ [%p - %p]\n", (void*)ret->stack_ceiling, (void*)ret->stack_floor);
+    ret->sp = ret->stack_floor = ret->stack_ceiling + attr->stack_size;
+    if(attr->tag != NULL)
+        ret->_private = (void*)attr->tag();
+    else
+        ret->_private = (void*)&_default_tag;
 
 #else /* #ifdef _PROFILED_BUILD  */
 
 #ifdef _WITH_SYSAPI_POSIX
-    if(ssize != 0)
-        ssize = _align_size_to_page(ssize);
-    else
-        ssize = CFIB_DEF_STACK_SIZE;
-#ifndef __FreeBSD__
-    uint_fast32_t page_size = _get_sys_page_size();
-#endif
 #if defined(__FreeBSD__)
     int mmap_flags = MAP_STACK|MAP_PRIVATE;
 #else
     int mmap_flags = MAP_ANONYMOUS|MAP_PRIVATE;
 #endif
 #if defined(__FreeBSD__)
-    void *m = mmap(0, ssize, PROT_READ|PROT_WRITE, mmap_flags, -1, 0);
+    void *m = mmap(0, attr->stack_size, PROT_READ|PROT_WRITE, mmap_flags, -1, 0);
 #else
-    void *m = mmap(0, ssize + page_size, PROT_READ|PROT_WRITE, mmap_flags, -1, 0);
+    void *m = mmap(0, attr->stack_size + page_size, PROT_READ|PROT_WRITE, mmap_flags, -1, 0);
 #endif
     if(m == MAP_FAILED) {
-        fprintf(stderr, "libcfib: WARNING: cfib_new() failed to allocate stack!\n");
+        fprintf(stderr, "libcfib: WARNING: cfib_new() failed to mmap() stack!\n");
         goto _errexit;
     }
 #ifndef __FreeBSD__
@@ -230,21 +246,56 @@ cfib_t* cfib_new(void* start_routine, void* args, uint_fast32_t ssize)
     m += page_size;
 #endif
     ret->stack_ceiling = (unsigned char*)m;
-    ret->sp = ret->stack_floor = ret->stack_ceiling + ssize;
-    _cfib_init_stack(&ret->sp, start_routine, args);
+    ret->sp = ret->stack_floor = ret->stack_ceiling + attr->stack_size;
 #elif defined (_WITH_SYSAPI_WINDOWS)
     #error "TODO: WINAPI support."
 #endif
 
 #endif /* #ifdef _PROFILED_BUILD */
 _exit:
+    _cfib_init_stack(&ret->sp, start_routine, args);
+    ret->_magic = (uintptr_t)ret ^ _CFIB_MGK1;
     return ret;
 _errexit:
-    free(ret);
+    if(ret != NULL) free(ret);
     return NULL;
 }
 
+#ifdef _PROFILED_BUILD
+void cfib_join_profiled_group(struct _cfib_tag* (*tag_ctor)(void), const char* _DFILE, int _DLINE) {
+    struct _cfib_tag* _tag = tag_ctor();
+    assert( offsetof(struct _cfib_tag, __padding__) == offsetof(cfib_tag_t, num_faults) );
+    assert( sizeof(cfib_tag_t) <= sizeof(struct _cfib_tag) );
+    if(_cfib_current == NULL || _cfib_current->_magic != ((uintptr_t)_cfib_current ^ _CFIB_MGK1)) {
+        fprintf(stderr, "libcfib: Invalid fiber assigned to profiled group @ %s:%d\n", _DFILE, _DLINE);
+        return;
+    }
+    cfib_tag_t* tag = (cfib_tag_t*)_tag;
+    if(tag == NULL) {
+        _cfib_current->_private = (void*)&_default_tag;
+        return;
+    }
+    if(tag->_magic != _CFIB_MGK2) {
+        fprintf(stderr, "libcfib: Invalid profiled group specified @ %s:%d\n", _DFILE, _DLINE);
+        return;
+    }
+    _cfib_current->_private = (void*)tag;
+    return;
+}
+#else
+void cfib_join_profiled_group(struct _cfib_tag* (*tag_ctor)(void), const char* _DFILE, int _DLINE) {
+    fprintf(stderr, "libcfib: Profiling attempted with non-profiled library build @ %s:%d\n", _DFILE, _DLINE);
+    return;
+}
+#endif
+
 void cfib_unmap(cfib_t* context) {
+#ifdef _PROFILED_BUILD
+
+    free(context->stack_ceiling);
+
+#else
+
 #ifdef _WITH_SYSAPI_POSIX
 #ifdef __FreeBSD__
     munmap(context->stack_ceiling, (size_t)(context->stack_floor - context->stack_ceiling));
@@ -254,6 +305,8 @@ void cfib_unmap(cfib_t* context) {
 #endif
 #elif _WITH_SYSAPI_WINDOWS
     #error "TODO: WINAPI support."
+#endif
+
 #endif
     memset(context, 0, sizeof(cfib_t));
 }
