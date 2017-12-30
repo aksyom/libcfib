@@ -29,11 +29,19 @@
     #error "TODO: WINAPI support."
 #endif
 
-_Thread_local cfib_t* _cfib_current = NULL;
-_Thread_local cfib_t* _cfib_previous = NULL;
+_Thread_local struct _cfib_tls _cfib_tls = {
+    .current = NULL,
+    .previous = NULL
+};
+
+static cfib_attr_t _default_attr = {
+    .stack_size = 1<<16,
+    .flags = 0x0,
+    .tag = NULL
+};
 
 // @internal Implemented in assembler module
-void _cfib_init_stack(unsigned char** sp, void* start_addr, void* args);
+void _cfib_init_stack(unsigned char** sp, cfib_func start_addr, void* args);
 
 static inline uint_fast32_t _get_sys_page_size()
 {
@@ -77,10 +85,10 @@ static struct sigaction _prof_oact;
 void _prof_segv_handler(int sig, siginfo_t *nfo, void *uap) {
     if(nfo->si_addr == NULL)
         goto next;
-    if(_cfib_current == NULL)
+    if(_cfib_tls.current == NULL)
         goto next;
     cfib_t* faulting_fib = NULL;
-    cfib_t* fibs[] ={_cfib_current, _cfib_previous};
+    cfib_t* fibs[] ={_cfib_tls.current, _cfib_tls.previous};
     for(int i = 0; i < 2; i++) {
         if( nfo->si_addr >= (void*)fibs[i]->stack_ceiling
             && nfo->si_addr < (void*)fibs[i]->stack_floor )
@@ -94,7 +102,7 @@ void _prof_segv_handler(int sig, siginfo_t *nfo, void *uap) {
     void *stack_ceiling = faulting_fib->stack_ceiling;
     void *stack_floor = faulting_fib->stack_floor;
     unsigned page_size = _get_sys_page_size();
-    void *page_addr = nfo->si_addr - ((uintptr_t)nfo->si_addr % page_size);
+    char *page_addr = (char*)nfo->si_addr - ((uintptr_t)nfo->si_addr % page_size);
     if(page_addr == stack_ceiling) {
         fprintf(stderr, "libcfib: Stack break @ %p\n", nfo->si_addr);
         goto next;
@@ -111,7 +119,6 @@ void _prof_segv_handler(int sig, siginfo_t *nfo, void *uap) {
     if(tag->max_stack_size < stack_diff)
         tag->max_stack_size = stack_diff;
     atomic_store_explicit(&tag->_sync, 0, memory_order_release);
-ok_exit:
     fputs("\n", stderr);
     return;
 //next_clear:
@@ -170,7 +177,7 @@ cfib_t* cfib_init_thread()
     static _Thread_local int called_before = 0;
     if(called_before) {
         fprintf(stderr, "libcfib_C11: WARNING: cfib_init_thread() called more than once per thread!\n");
-        return _cfib_current;
+        return _cfib_tls.current;
     }
 #if defined(_PROFILED_BUILD) && defined (_WITH_SYSAPI_POSIX)
     _prof_init_thread();
@@ -178,33 +185,28 @@ cfib_t* cfib_init_thread()
 #elif defined(_PROFILED_BUILD) && defined (_WITH_SYSAPI_WINDOWS)
     #error "TODO: WINAPI profiling support."
 #endif
-    _cfib_current = calloc(1, sizeof(cfib_t));
-    _cfib_current->_magic = (uintptr_t)_cfib_current ^ _CFIB_MGK1;
+    _cfib_tls.current = calloc(1, sizeof(cfib_t));
+    _cfib_tls.current->_magic = (uintptr_t)_cfib_tls.current ^ _CFIB_MGK1;
     called_before = 1;
-    return _cfib_current;
+    return _cfib_tls.current;
 }
 
-cfib_t* cfib_new(void* start_routine, void* args, const cfib_attr_t* attr)
+cfib_t* cfib_new(cfib_func start_routine, void* args, const cfib_attr_t* attr)
 {
     cfib_t* ret = (cfib_t*)calloc(1, sizeof(cfib_t));
     if(ret == NULL)
         return NULL;
     cfib_attr_t _attr;
     unsigned page_size = _get_sys_page_size();
-    if(attr == NULL) {
-        _attr = (cfib_attr_t){
-            .stack_size = 1<<16,
-            .flags = 0x0,
-            .tag = NULL
-        };
-    } else {
+    if(attr != NULL) {
         _attr.stack_size = _align_size_to_page(attr->stack_size);
         if(_attr.stack_size < (2 * page_size))
             _attr.stack_size = 2 * page_size;
         _attr.flags = attr->flags;
         _attr.tag = attr->tag;
-    }
-    attr = &_attr;
+        attr = &_attr;
+    } else
+        attr = &_default_attr;
 #ifdef _PROFILED_BUILD
     void *stack_ceiling = NULL;
     int res = posix_memalign(&stack_ceiling, page_size, attr->stack_size);
@@ -249,7 +251,6 @@ cfib_t* cfib_new(void* start_routine, void* args, const cfib_attr_t* attr)
 #endif
 
 #endif /* #ifdef _PROFILED_BUILD */
-_exit:
     _cfib_init_stack(&ret->sp, start_routine, args);
     ret->_magic = (uintptr_t)ret ^ _CFIB_MGK1;
     return ret;
@@ -257,34 +258,6 @@ _errexit:
     if(ret != NULL) free(ret);
     return NULL;
 }
-
-#ifdef _PROFILED_BUILD
-void cfib_join_profiled_group(struct _cfib_tag* (*tag_ctor)(void), const char* _DFILE, int _DLINE) {
-    struct _cfib_tag* _tag = tag_ctor();
-    assert( offsetof(struct _cfib_tag, __padding__) == offsetof(cfib_tag_t, num_faults) );
-    assert( sizeof(cfib_tag_t) <= sizeof(struct _cfib_tag) );
-    if(_cfib_current == NULL || _cfib_current->_magic != ((uintptr_t)_cfib_current ^ _CFIB_MGK1)) {
-        fprintf(stderr, "libcfib: Invalid fiber assigned to profiled group @ %s:%d\n", _DFILE, _DLINE);
-        return;
-    }
-    cfib_tag_t* tag = (cfib_tag_t*)_tag;
-    if(tag == NULL) {
-        _cfib_current->_private = (void*)&_default_tag;
-        return;
-    }
-    if(tag->_magic != _CFIB_MGK2) {
-        fprintf(stderr, "libcfib: Invalid profiled group specified @ %s:%d\n", _DFILE, _DLINE);
-        return;
-    }
-    _cfib_current->_private = (void*)tag;
-    return;
-}
-#else
-void cfib_join_profiled_group(struct _cfib_tag* (*tag_ctor)(void), const char* _DFILE, int _DLINE) {
-    fprintf(stderr, "libcfib: Profiling attempted with non-profiled library build @ %s:%d\n", _DFILE, _DLINE);
-    return;
-}
-#endif
 
 void cfib_unmap(cfib_t* context) {
 #ifdef _PROFILED_BUILD

@@ -7,7 +7,7 @@
 
 #include "cfib.h"
 
-CFIB_TAG_CTOR(StackHogs);
+CFIB_TAG_CTOR(StackHogs)
 
 #define NUM_SAMPLES 100000
 
@@ -25,10 +25,11 @@ void func_pingpong__noassert__(void *arg) {
 }
 
 void func_stack_hog(uintptr_t n) {
-    char hog[4096];
+    char buf[4096];
+    char *hog = buf;
     if(n > 0) {
-        //fprintf(stderr, "stack_hog[%lu]: %lX\n", n, &hog);
         hog[0] = (char)0;
+        //fprintf(stderr, "stack_hog[%lu]: %lX\n", n, &hog);
         func_stack_hog(n - 1);
     }
     return;
@@ -68,7 +69,7 @@ long _get_median(long* b, size_t s) {
 
 void bench_swap(int n) {
     struct timespec tp0, tp1;
-    cfib_t* test_context = cfib_new((void*)func_pingpong, (void*)fib_main, NULL);
+    cfib_t* test_context = cfib_new((cfib_func)func_pingpong, (void*)fib_main, NULL);
     long *intervals = mmap(0, sizeof(long) * n, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0);
     clock_gettime(CLOCK_THREAD_CPUTIME_ID, &tp0);
     long tt = tp0.tv_nsec;
@@ -91,7 +92,7 @@ void bench_swap(int n) {
 
 void bench_swap__noassert__(int n) {
     struct timespec tp0, tp1;
-    cfib_t* test_context = cfib_new((void*)func_pingpong__noassert__, (void*)fib_main, NULL);
+    cfib_t* test_context = cfib_new((cfib_func)func_pingpong__noassert__, (void*)fib_main, NULL);
     long *intervals = mmap(0, sizeof(long) * n, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0);
     clock_gettime(CLOCK_THREAD_CPUTIME_ID, &tp0);
     long tt = tp0.tv_nsec;
@@ -114,7 +115,7 @@ void bench_swap__noassert__(int n) {
 
 void test_stack_hog() {
     cfib_attr_t attr = (cfib_attr_t){.stack_size = 1<<20, .tag = StackHogs};
-    cfib_t* test_context = cfib_new((void*)func_stack_hog, (void*)16, &attr);
+    cfib_t* test_context = cfib_new((cfib_func)func_stack_hog, (void*)16, &attr);
     cfib_swap(test_context);
 }
 
@@ -159,7 +160,6 @@ int main(int argc, char** argv) {
         default:
             goto errexit;
     }
-exit:
     return 0;
 errexit:
     print_usage(argv[0]);

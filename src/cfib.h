@@ -86,6 +86,19 @@ typedef struct {
     void* _private;
 } cfib_t;
 
+/** Function signature type for fiber entrypoint.
+ *
+ * This is the signature type for fiber entrypoint function. It can be used
+ * for typecasting a function of compatible signature. Example:
+ *
+ * void func(int* n);
+ * int num = 42;
+ * ...
+ * cfib_new((cfib_func)func, (void*)&num);
+ *
+ */
+typedef void (*cfib_func)(void*);
+
 struct _cfib_tag {
     const char* _name;
     uintptr_t _magic;
@@ -101,35 +114,13 @@ typedef struct {
 #define CFIB_STKEXEC    0x00000001
 #define CFIB_PREFAULT   0x00000016
 
-/** @var _cfib_current
- * @brief An internal, thread-local variable pointing to currently run fiber.
- *
- * The reason we prefix this identifier with underscore is that the library
- * might change the name of this variable later. It is provided here only so
- * that the cfib_swap* functions can swap current fiber to another. The reason
- * for exposing this thread-local variable is performance. In ELF platforms
- * a dynamic library call overhead just to get one pointer is huge waste. And
- * even if static-compiled, or running in PE/COFF, we save one jump.
- *
- * To get pointer to current fiber, use the cfib_get_current() inline accessor
- * function. Only the source code interface of the accessor function is
- * guaranteed to be stable across library versions.
- *
- * The compiler used must support either C++11 thread_local or
- * C11 _Thread_local primitives. If it supports neither, upgrade your compiler.
- * This is not an impossible task, since GCC has supported C++11 thread_local
- * since 4.8, and C11 _Thread_local since 4.9. Clang has supported both for
- * quite a long while. It is preferred not to make any workarounds, especially
- * for proprietary compilers/platforms.
- */
-#ifdef __cplusplus
-extern thread_local cfib_t* _cfib_current;
-#else
-extern _Thread_local cfib_t* _cfib_current;
-#endif
+struct _cfib_tls {
+    cfib_t* current;
+    cfib_t* previous;
+};
 
-/** @var _cfib_previous
- * @brief An internal, thread-local variable pointing to the fiber previous to current.
+/** @var _cfib_tls
+ * @brief CFib library specific thread-local data.
  *
  * The reason we prefix this identifier with underscore is that the library
  * might change the name of this variable later. It is provided here only so
@@ -138,9 +129,10 @@ extern _Thread_local cfib_t* _cfib_current;
  * a dynamic library call overhead just to get one pointer is huge waste. And
  * even if static-compiled, or running in PE/COFF, we save one jump.
  *
- * To get pointer to current fiber, use the cfib_get_previous() inline accessor
- * function. Only the source code interface of the accessor function is
- * guaranteed to be stable across library versions.
+ * To get pointer to current or previous fiber, use the cfib_get_current() or
+ * cfib_get_previous() inline accessor functions. Only the source code
+ * interface of the accessor function is guaranteed to be stable across
+ * library versions.
  *
  * The compiler used must support either C++11 thread_local or
  * C11 _Thread_local primitives. If it supports neither, upgrade your compiler.
@@ -150,9 +142,9 @@ extern _Thread_local cfib_t* _cfib_current;
  * for proprietary compilers/platforms.
  */
 #ifdef __cplusplus
-extern thread_local cfib_t* _cfib_previous;
+extern thread_local struct _cfib_tls _cfib_tls;
 #else
-extern _Thread_local cfib_t* _cfib_previous;
+extern _Thread_local struct _cfib_tls _cfib_tls;
 #endif
 
 /** Initialize a fiber for current thread.
@@ -172,45 +164,65 @@ cfib_t* cfib_init_thread();
  * stack so that fiber execution begins at 'start_routine' -function, and
  * the function receives the 'args' as it's argument.
  * 
- * The argument 'start_routine' must be a pointer to a function which has
- * the signature of void (*)(TYPE *), where TYPE is any type you desire.
- * In layman terms, the function for 'start_routine'
- * - must take only one pointer (of any type) as an argument
- * - has a return type of void
+ * The argument 'start_routine' must point to a function which has
+ * the signature of void (void *). In layman terms, the function for
+ * 'start_routine'
+ * - must take only pointer with type of void* as an argument
+ * - does not return a value ie. has return type of void
  *
- * The argument 'start_routine' should always be explicitly cast to void*
+ * However, it is permissible to pass as 'start_routine' a function which has
+ * argument type other than void*. If this is the case, the function pointer
+ * should be explicitly cast into cfib_func. Argument 'args' should be cast to
+ * void*. Example
+ *
+ * void my_fib_func(my_type_t* type);
+ * my_type_t my_data = { ... };
+ * ...
+ * cfib_new((cfib_func)my_fib_func, (void*)&my_data);
+ *
+ * NOTE: it is important that the argument type of fiber function is a type of
+ * bit-width equal or less than the bit-width of void*. Most often this type
+ * would be a pointer to specific kind of struct etc. CFib does not care what
+ * the argument type is, the 'args' will be passed as-is to the called function
+ * as it's first argument.
+ *
+ * If compiling with C++, it is recommended to call cfib_new() without
+ * explicit typecasting on the arguments. An inline function template is
+ * provided, which makes the compiler deduce whether the provided
+ * arguments are of compatible type, and if so, typecasting is done
+ * automatically.
  *
  * @param[in] start_routine a pointer to a function to be executed when cfib_swap() is called on this context.
  * @param[in] args pointer to argument data passed as 1st argument to start_routine.
  * @param[in] attr attributes for this fiber, if NULL, defaults are used
  * @return pointer to the new fiber, or NULL if memory allocation failed.
  */
-cfib_t* cfib_new(void* start_routine, void* args, const cfib_attr_t* attr);
+cfib_t* cfib_new(cfib_func start_routine, void* args, const cfib_attr_t* attr);
 
 #ifdef __cplusplus
 template <typename T>
 static inline cfib_t* cfib_new(void (*start_routine)(T*), T* args, const cfib_attr_t* attr) {
-    return cfib_new((void*)start_routine, (void*)args, attr);
+    return cfib_new((cfib_fn)start_routine, (void*)args, attr);
 }
 #endif
 
 
 static inline cfib_t* cfib_get_current() {
-    assert("CALL cfib_init_thread() BEFORE CALLING cfib_get_current() !!!" && _cfib_current != NULL && _cfib_current->_magic == ((uintptr_t)_cfib_current ^ _CFIB_MGK1));
-    return _cfib_current;
+    assert("CALL cfib_init_thread() BEFORE CALLING cfib_get_current() !!!" && _cfib_tls.current != NULL && _cfib_tls.current->_magic == ((uintptr_t)_cfib_tls.current ^ _CFIB_MGK1));
+    return _cfib_tls.current;
 }
 
 static inline cfib_t* cfib_get_current__noassert__() {
-    return _cfib_current;
+    return _cfib_tls.current;
 }
 
 static inline cfib_t* cfib_get_previous() {
-    assert("CALL cfib_init_thread() BEFORE CALLING cfib_get_previous() !!!" && _cfib_previous != NULL && _cfib_previous->_magic == ((uintptr_t)_cfib_previous ^ _CFIB_MGK1));
-    return _cfib_previous;
+    assert("CALL cfib_init_thread() BEFORE CALLING cfib_get_previous() !!!" && _cfib_tls.previous != NULL && _cfib_tls.previous->_magic == ((uintptr_t)_cfib_tls.previous ^ _CFIB_MGK1));
+    return _cfib_tls.previous;
 }
 
 static inline cfib_t* cfib_get_previous__noassert__() {
-    return _cfib_previous;
+    return _cfib_tls.previous;
 }
 
 /** Saves context to sp1, pivots to sp2, restores context and returns.
@@ -240,11 +252,11 @@ void _cfib_swap(unsigned char** sp1, unsigned char* sp2);
  * @remark It is ENTIRELY up to the programmer to keep tabs on different contexts.
  */
 static inline void cfib_swap(cfib_t* to) {
-    assert("CALL cfib_init_thread() BEFORE CALLING cfib_swap() !!!" && _cfib_current != NULL && _cfib_current->_magic == ((uintptr_t)_cfib_current ^ _CFIB_MGK1));
+    assert("CALL cfib_init_thread() BEFORE CALLING cfib_swap() !!!" && _cfib_tls.current != NULL && _cfib_tls.current->_magic == ((uintptr_t)_cfib_tls.current ^ _CFIB_MGK1));
     assert("Argument cfib_t* to was NOT created via cfib_new() !!!" && to != NULL && to->_magic == ((uintptr_t)to ^ _CFIB_MGK1));
-    _cfib_previous = _cfib_current;
-    _cfib_current = to;
-    _cfib_swap(&_cfib_previous->sp, to->sp);
+    _cfib_tls.previous = _cfib_tls.current;
+    _cfib_tls.current = to;
+    _cfib_swap(&_cfib_tls.previous->sp, to->sp);
 }
 
 /** Swap current fiber with the one provided as argument (faster).
@@ -264,9 +276,9 @@ static inline void cfib_swap(cfib_t* to) {
  * @remark It is ENTIRELY up to the programmer to keep tabs on different contexts.
  */
 static inline void cfib_swap__noassert__(cfib_t *to) {
-    _cfib_previous = _cfib_current;
-    _cfib_current = to;
-    _cfib_swap(&_cfib_previous->sp, to->sp);
+    _cfib_tls.previous = _cfib_tls.current;
+    _cfib_tls.current = to;
+    _cfib_swap(&_cfib_tls.previous->sp, to->sp);
 }
 
 /** Unmap the stack memory of the provided context.
