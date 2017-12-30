@@ -91,10 +91,11 @@ typedef struct {
  * This is the signature type for fiber entrypoint function. It can be used
  * for typecasting a function of compatible signature. Example:
  *
- * void func(int* n);
- * int num = 42;
+ * typedef struct { int a, int b } my_type;
+ * void my_func(my_type* t);
+ * my_type my_data = {42, 24};
  * ...
- * cfib_new((cfib_func)func, (void*)&num);
+ * cfib_new((cfib_func)my_func, (void*)&my_data);
  *
  */
 typedef void (*cfib_func)(void*);

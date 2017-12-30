@@ -10,6 +10,8 @@ vars.Add(PathVariable('libdir', "Library files' install dir", '${prefix}/lib'))
 #root_env = Environment(variables = vars, tools = ['default', 'nasm'])
 root_env = Environment(variables = vars)
 root_env['ENV']['TERM'] = os.environ['TERM']
+root_env.Append(CCFLAGS = ['-Wall', '-Wpedantic', '-g'])
+root_env.Append(LINKFLAGS = ['-g'])
 
 # Generate help text for cli options
 Help(vars.GenerateHelpText(root_env))
@@ -66,10 +68,6 @@ else:
     Exit(1)
 
 root_env = cnf.Finish()
-
-# Add debug flags etc
-root_env.Append(CCFLAGS = ['-Wall', '-Wpedantic', '-g'])
-root_env.Append(LINKFLAGS = ['-g'])
 
 Export('root_env', 'config_system_API', 'config_system_ABI', 'config_have_c11_atomics')
 built_files = SConscript('src/SConscript', variant_dir='build', duplicate=0)
