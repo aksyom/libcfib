@@ -66,9 +66,6 @@ typedef struct {
 
 static cfib_tag_t _default_tag = {._name = "__DEFAULT__"};
 
-//#define _PROF_STKSZ (1<<20)
-//#define _PROF_STKEXP 20
-
 #define _atomic_test_and_set(flag) atomic_flag_test_and_set_explicit(flag, memory_order_relaxed)
 #define _atomic_clear(flag) atomic_flag_clear_explicit(flag, memory_order_release)
 
